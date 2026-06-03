@@ -1,28 +1,23 @@
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@supabase/supabase-js";
 
-// ── SUPABASE CONFIG ───────────────────────────────────────────────────────────
-const supabase = createClient(
-  "https://cynrrvqtnnzhafxjroxt.supabase.co",
-  "sb_publishable_pXVSVsj-rXcTpSUpjzk5Cw_3W5u0mYY"
-);
+// ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
+const DB_URL = "https://wc2026-306ec-default-rtdb.firebaseio.com";
 
 async function dbLoad() {
-  const { data, error } = await supabase
-    .from("pool")
-    .select("players, predictions")
-    .eq("id", "main")
-    .single();
-  if (error) throw new Error(error.message);
+  const r = await fetch(`${DB_URL}/pool.json`);
+  if (!r.ok) throw new Error(`Firebase error ${r.status}`);
+  const data = await r.json();
+  if (!data) return { players: [], predictions: {} };
   return { players: data.players || [], predictions: data.predictions || {} };
 }
 
 async function dbSave(players, predictions) {
-  const { error } = await supabase
-    .from("pool")
-    .update({ players, predictions, updated_at: new Date().toISOString() })
-    .eq("id", "main");
-  if (error) throw new Error(error.message);
+  const r = await fetch(`${DB_URL}/pool.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ players, predictions }),
+  });
+  if (!r.ok) throw new Error(`Firebase save error ${r.status}`);
 }
 
 // ── GROUPS ────────────────────────────────────────────────────────────────────
