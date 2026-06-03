@@ -144,7 +144,13 @@ Return ONLY the JSON.`;
   const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   const cleaned = raw.replace(/```json|```/g, "").trim();
   const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  if (s === -1) throw new Error("No JSON returned");
+  // If no JSON yet (tournament hasn't started), return empty results
+  if (s === -1) return {
+    groupRankings: { A:null,B:null,C:null,D:null,E:null,F:null,G:null,H:null,I:null,J:null,K:null,L:null },
+    propResults: Array(17).fill(null),
+    matchday: "Tournament starts June 11",
+    lastUpdated: new Date().toISOString(),
+  };
   return JSON.parse(cleaned.slice(s, e + 1));
 }
 
