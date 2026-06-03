@@ -130,7 +130,7 @@ ${Object.entries(TEAMS_BY_GROUP).map(([g,t])=>`Group ${g}: ${t.join(", ")}`).joi
 
 Return ONLY the JSON.`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/scores", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
