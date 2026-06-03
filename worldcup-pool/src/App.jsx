@@ -20,6 +20,16 @@ async function dbSave(players, predictions) {
   if (!r.ok) throw new Error(`Firebase save error ${r.status}`);
 }
 
+// ── AUTH HELPERS ─────────────────────────────────────────────────────────────
+const ADMIN = { name: "DYoung", passwordHash: "DYoung2026" }; // plain compare, good enough for a fun pool
+
+function hashPassword(pw) {
+  // Simple deterministic hash — not cryptographic but fine for a fun pool
+  let h = 0;
+  for (let i = 0; i < pw.length; i++) { h = Math.imul(31, h) + pw.charCodeAt(i) | 0; }
+  return h.toString(36);
+}
+
 // ── GROUPS ────────────────────────────────────────────────────────────────────
 const TEAMS_BY_GROUP = {
   A: ["Mexico", "South Africa", "South Korea", "Czech Republic"],
@@ -229,6 +239,11 @@ export default function WorldCupPool() {
   const [dbError, setDbError]             = useState("");
   const [currentPlayer, setCurrentPlayer] = useState(null);
   const [newName, setNewName]             = useState("");
+  const [newPassword, setNewPassword]     = useState("");
+  const [loginName, setLoginName]         = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError]       = useState("");
+  const [isAdmin, setIsAdmin]             = useState(false);
 
   const [predTab, setPredTab]             = useState("groups");
   const [selGroup, setSelGroup]           = useState("A");
@@ -270,22 +285,52 @@ export default function WorldCupPool() {
 
   async function register() {
     const name = newName.trim();
-    if (!name || players.find(p => p.name === name)) return;
-    const player = { name, id: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
+    const pw = newPassword.trim();
+    if (!name || !pw || players.find(p => p.name === name)) return;
+    const player = { name, id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, passwordHash: hashPassword(pw) };
     const np = [...players, player];
     setPlayers(np);
     await dbSave(np, predictions);
     setCurrentPlayer(player);
-    setNewName(""); setGroupRankings({}); setPropPicks(Array(17).fill(null));
+    setIsAdmin(false);
+    setNewName(""); setNewPassword("");
+    setGroupRankings({}); setPropPicks(Array(17).fill(null));
     setScreen("predict");
   }
 
-  function loginPlayer(player) {
+  function loginPlayer() {
+    const name = loginName.trim();
+    const pw = loginPassword.trim();
+    setLoginError("");
+    // Admin login
+    if (name === ADMIN.name && pw === ADMIN.passwordHash) {
+      setCurrentPlayer({ name, id: "admin" });
+      setIsAdmin(true);
+      setLoginName(""); setLoginPassword("");
+      setScreen("admin");
+      return;
+    }
+    // Player login
+    const player = players.find(p => p.name === name);
+    if (!player) { setLoginError("Player not found"); return; }
+    if (player.passwordHash !== hashPassword(pw)) { setLoginError("Wrong password"); return; }
     setCurrentPlayer(player);
+    setIsAdmin(false);
     const e = predictions[player.id] || {};
     setGroupRankings(e.groupRankings || {});
     setPropPicks(e.propPicks || Array(17).fill(null));
-    setSaved(false); setScreen("predict");
+    setSaved(false);
+    setLoginName(""); setLoginPassword("");
+    setScreen("predict");
+  }
+
+  async function deletePlayer(playerId) {
+    const np = players.filter(p => p.id !== playerId);
+    const np2 = { ...predictions };
+    delete np2[playerId];
+    setPlayers(np);
+    setPredictions(np2);
+    await dbSave(np, np2);
   }
 
   async function savePreds() {
@@ -345,6 +390,9 @@ export default function WorldCupPool() {
               {s==="home" ? "🏠 Home" : "🏆 Board"}
             </button>
           ))}
+          {isAdmin && (
+            <button style={S.navBtn(screen==="admin")} onClick={() => setScreen("admin")}>⚙️ Admin</button>
+          )}
           <button style={{ ...S.navBtn(false), background:"rgba(0,100,40,0.4)", color:"#8fffb0" }}
             onClick={refreshScores} disabled={fetchStatus==="loading"}>
             {fetchStatus==="loading" ? "⏳" : "🔄"} Live
@@ -392,27 +440,42 @@ export default function WorldCupPool() {
               <div style={{ fontSize:12, color:"#80d0ff" }}>☁️ <strong>Persistent pool</strong> — data saved to Supabase. Share this link with anyone; their picks save permanently and the leaderboard updates for everyone in real time.</div>
             </div>
 
+            {/* Login */}
+            <div style={S.card}>
+              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>LOG IN</div>
+              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                <input value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="Your name…" style={{ ...S.input, flex:1 }} />
+                <input value={loginPassword} onChange={e => setLoginPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && loginPlayer()} type="password" placeholder="Password…" style={{ ...S.input, flex:1 }} />
+                <button onClick={loginPlayer} style={S.btn}>Login</button>
+              </div>
+              {loginError && <div style={{ color:"#e06060", fontSize:11 }}>{loginError}</div>}
+            </div>
+
+            {/* Join */}
+            <div style={S.card}>
+              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>NEW? JOIN THE POOL</div>
+              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Choose a name…" style={{ ...S.input, flex:1 }} />
+                <input value={newPassword} onChange={e => setNewPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && register()} type="password" placeholder="Choose a password…" style={{ ...S.input, flex:1 }} />
+                <button onClick={register} style={S.btn}>Join</button>
+              </div>
+              {players.find(p => p.name===newName.trim()) && <div style={{ color:"#e06060", fontSize:11 }}>Name already taken</div>}
+              {newName.trim() && !newPassword.trim() && <div style={{ color:"#e06060", fontSize:11 }}>Password required</div>}
+            </div>
+
+            {/* Player list - names only, no login from here */}
             {players.length > 0 && (
-              <div style={{ marginBottom:14 }}>
-                <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1, marginBottom:8 }}>PLAYERS — tap to edit your picks</div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              <div style={{ ...S.card }}>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>PLAYERS ({players.length})</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                   {players.map(p => (
-                    <button key={p.id} onClick={() => loginPlayer(p)} style={{ background:"rgba(200,168,75,0.15)", border:"1px solid rgba(200,168,75,0.4)", borderRadius:20, padding:"6px 14px", color:"#f0d060", cursor:"pointer", fontSize:13 }}>
+                    <div key={p.id} style={{ background:"rgba(200,168,75,0.1)", border:"1px solid rgba(200,168,75,0.3)", borderRadius:20, padding:"4px 12px", color:"#f0d060", fontSize:12 }}>
                       {predictions[p.id] ? "✓ " : ""}{p.name}
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
-
-            <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>JOIN THE POOL</div>
-              <div style={{ display:"flex", gap:8 }}>
-                <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key==="Enter" && register()} placeholder="Your name…" style={{ ...S.input, flex:1 }} />
-                <button onClick={register} style={S.btn}>Join</button>
-              </div>
-              {players.find(p => p.name===newName.trim()) && <div style={{ color:"#e06060", fontSize:11, marginTop:4 }}>Name already taken</div>}
-            </div>
           </div>
         )}
 
@@ -542,6 +605,29 @@ export default function WorldCupPool() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── ADMIN ── */}
+        {screen==="admin" && isAdmin && (
+          <div>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+              <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>⚙️ Admin Panel</h2>
+              <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
+            </div>
+            <div style={S.card}>
+              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1 }}>PLAYERS — click 🗑 to delete</div>
+              {players.length === 0 && <div style={{ color:"#9ab8a0", fontSize:12 }}>No players yet.</div>}
+              {players.map(p => (
+                <div key={p.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                  <div>
+                    <span style={{ fontSize:14, color:"#f0e6c8" }}>{p.name}</span>
+                    <span style={{ fontSize:11, color:"#9ab8a0", marginLeft:8 }}>{predictions[p.id] ? "✓ picks submitted" : "no picks yet"}</span>
+                  </div>
+                  <button onClick={() => { if(window.confirm(`Delete ${p.name}?`)) deletePlayer(p.id); }} style={{ background:"rgba(200,60,60,0.2)", border:"1px solid rgba(200,60,60,0.4)", borderRadius:6, padding:"4px 10px", color:"#ff8080", cursor:"pointer", fontSize:12 }}>🗑 Delete</button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
