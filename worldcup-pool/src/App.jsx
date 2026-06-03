@@ -2,11 +2,20 @@ import { useState, useEffect, useCallback } from "react";
 
 // ── SUPABASE CONFIG ───────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://cynrrvqtnnzhafxjroxt.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5bnJydnF0bm56aGFmeGpyb3h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjczMjcsImV4cCI6MjA5NjAwMzMyN30.oWq8_l1inLkj5FXnZO79VU5jXNoFzA9PryiwX8KVFYk";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_pXVSVsj-rXcTpSUpjzk5Cw_3W5u0mYY";
+const SUPABASE_LEGACY_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5bnJydnF0bm56aGFmeGpyb3h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjczMjcsImV4cCI6MjA5NjAwMzMyN30.oWq8_l1inLkj5FXnZO79VU5jXNoFzA9PryiwX8KVFYk";
+
+function dbHeaders(extra = {}) {
+  return {
+    "apikey": SUPABASE_PUBLISHABLE_KEY,
+    "Authorization": `Bearer ${SUPABASE_LEGACY_KEY}`,
+    ...extra,
+  };
+}
 
 async function dbLoad() {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/pool?id=eq.main&select=players,predictions`, {
-    headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+    headers: dbHeaders(),
   });
   const rows = await r.json();
   if (!rows || rows.length === 0) return { players: [], predictions: {} };
@@ -16,13 +25,8 @@ async function dbLoad() {
 async function dbSave(players, predictions) {
   await fetch(`${SUPABASE_URL}/rest/v1/pool?id=eq.main`, {
     method: "PATCH",
-    headers: {
-      "apikey": SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      "Prefer": "return=minimal"
-    },
-    body: JSON.stringify({ players, predictions, updated_at: new Date().toISOString() })
+    headers: dbHeaders({ "Content-Type": "application/json", "Prefer": "return=minimal" }),
+    body: JSON.stringify({ players, predictions, updated_at: new Date().toISOString() }),
   });
 }
 
