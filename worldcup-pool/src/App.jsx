@@ -83,6 +83,34 @@ const DAILY_PROPS = [
   { date:"Jun 27", label:"Final Day",    q:"Will a higher-ranked team lose on the final group stage day?",                pts:8, yes:"Shock result!",            no:"Favourites all win" },
 ];
 
+// ── LOCK TIMES (ET) ──────────────────────────────────────────────────────────
+// Group rankings lock at first kickoff Jun 11 3pm ET
+const GROUP_RANKINGS_LOCK = new Date("2026-06-11T19:00:00Z"); // 3pm ET = 19:00 UTC
+
+// Each prop locks at first kickoff of that day (ET → UTC)
+const PROP_LOCKS = [
+  new Date("2026-06-11T19:00:00Z"), // Jun 11 3pm ET
+  new Date("2026-06-12T19:00:00Z"), // Jun 12 3pm ET
+  new Date("2026-06-13T19:00:00Z"), // Jun 13 3pm ET
+  new Date("2026-06-14T17:00:00Z"), // Jun 14 1pm ET
+  new Date("2026-06-15T16:00:00Z"), // Jun 15 noon ET
+  new Date("2026-06-16T19:00:00Z"), // Jun 16 3pm ET
+  new Date("2026-06-17T17:00:00Z"), // Jun 17 1pm ET
+  new Date("2026-06-18T16:00:00Z"), // Jun 18 noon ET
+  new Date("2026-06-19T19:00:00Z"), // Jun 19 3pm ET
+  new Date("2026-06-20T17:00:00Z"), // Jun 20 1pm ET
+  new Date("2026-06-21T19:00:00Z"), // Jun 21 3pm ET
+  new Date("2026-06-22T17:00:00Z"), // Jun 22 1pm ET
+  new Date("2026-06-23T17:00:00Z"), // Jun 23 1pm ET
+  new Date("2026-06-25T01:00:00Z"), // Jun 24 9pm ET
+  new Date("2026-06-25T23:00:00Z"), // Jun 25 7pm ET
+  new Date("2026-06-26T19:00:00Z"), // Jun 26 3pm ET
+  new Date("2026-06-27T21:00:00Z"), // Jun 27 5pm ET
+];
+
+function isGroupRankingsLocked() { return new Date() >= GROUP_RANKINGS_LOCK; }
+function isPropLocked(i) { return new Date() >= PROP_LOCKS[i]; }
+
 // ── SCORING ───────────────────────────────────────────────────────────────────
 function calcGroupRankingPoints(userRanking, actualRanking) {
   if (!userRanking || !actualRanking || userRanking.length !== 4 || actualRanking.length !== 4) return 0;
@@ -177,7 +205,7 @@ const S = {
 };
 
 // ── DRAG-TO-RANK ──────────────────────────────────────────────────────────────
-function RankPicker({ teams, ranking, onChange }) {
+function RankPicker({ teams, ranking, onChange, locked=false }) {
   const [dragging, setDragging] = useState(null);
   const [dragOver, setDragOver] = useState(null);
   const list = ranking?.length === 4 ? ranking : [...teams];
@@ -194,6 +222,7 @@ function RankPicker({ teams, ranking, onChange }) {
     setDragging(null); setDragOver(null);
   }
   function move(i, dir) {
+    if (locked) return;
     const j = i + dir;
     if (j < 0 || j >= list.length) return;
     const next = [...list]; [next[i], next[j]] = [next[j], next[i]]; onChange(next);
@@ -201,17 +230,23 @@ function RankPicker({ teams, ranking, onChange }) {
 
   return (
     <div>
+      {locked && (
+        <div style={{ background:"rgba(200,60,60,0.15)", border:"1px solid rgba(200,60,60,0.3)", borderRadius:8, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#ff9090" }}>
+          🔒 Group rankings are locked — picks closed at tournament kickoff
+        </div>
+      )}
       {list.map((team, i) => (
-        <div key={team} draggable
-          onDragStart={() => setDragging(i)}
-          onDragEnter={() => setDragOver(i)}
-          onDragEnd={onDragEnd}
+        <div key={team} draggable={!locked}
+          onDragStart={() => !locked && setDragging(i)}
+          onDragEnter={() => !locked && setDragOver(i)}
+          onDragEnd={!locked ? onDragEnd : undefined}
           onDragOver={e => e.preventDefault()}
           style={{
             display:"flex", alignItems:"center", gap:10,
             background: dragging===i ? "rgba(200,168,75,0.3)" : dragOver===i ? "rgba(200,168,75,0.12)" : "rgba(255,255,255,0.05)",
             border:`1px solid ${i<2?"rgba(100,200,100,0.3)":"rgba(255,255,255,0.08)"}`,
-            borderRadius:8, padding:"10px 12px", marginBottom:6, cursor:"grab", transition:"background 0.15s",
+            borderRadius:8, padding:"10px 12px", marginBottom:6, cursor:locked?"default":"grab", transition:"background 0.15s",
+            opacity: locked ? 0.7 : 1,
           }}>
           <span style={{ fontSize:18 }}>{medals[i]}</span>
           <span style={{ fontSize:20 }}>{tf(team)}</span>
@@ -219,13 +254,15 @@ function RankPicker({ teams, ranking, onChange }) {
             <div style={{ fontSize:13, color:"#f0e6c8" }}>{team}</div>
             <div style={{ fontSize:10, color:i<2?"#8fffb0":"#9ab8a0" }}>{posLabels[i]}</div>
           </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-            <button onClick={() => move(i,-1)} disabled={i===0} style={{ background:"rgba(255,255,255,0.08)", border:"none", borderRadius:3, color:"#9ab8a0", cursor:i===0?"default":"pointer", padding:"2px 6px", fontSize:10 }}>▲</button>
-            <button onClick={() => move(i,1)} disabled={i===list.length-1} style={{ background:"rgba(255,255,255,0.08)", border:"none", borderRadius:3, color:"#9ab8a0", cursor:i===list.length-1?"default":"pointer", padding:"2px 6px", fontSize:10 }}>▼</button>
-          </div>
+          {!locked && (
+            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+              <button onClick={() => move(i,-1)} disabled={i===0} style={{ background:"rgba(255,255,255,0.08)", border:"none", borderRadius:3, color:"#9ab8a0", cursor:i===0?"default":"pointer", padding:"2px 6px", fontSize:10 }}>▲</button>
+              <button onClick={() => move(i,1)} disabled={i===list.length-1} style={{ background:"rgba(255,255,255,0.08)", border:"none", borderRadius:3, color:"#9ab8a0", cursor:i===list.length-1?"default":"pointer", padding:"2px 6px", fontSize:10 }}>▼</button>
+            </div>
+          )}
         </div>
       ))}
-      <div style={{ fontSize:10, color:"#9ab8a0", marginTop:4 }}>Drag to reorder or use ▲▼ buttons</div>
+      {!locked && <div style={{ fontSize:10, color:"#9ab8a0", marginTop:4 }}>Drag to reorder or use ▲▼ buttons</div>}
     </div>
   );
 }
@@ -537,6 +574,7 @@ export default function WorldCupPool() {
                   teams={TEAMS_BY_GROUP[selGroup]}
                   ranking={groupRankings[selGroup]}
                   onChange={r => setGroupRankings(prev => ({ ...prev, [selGroup]:r }))}
+                  locked={isGroupRankingsLocked()}
                 />
                 <div style={{ display:"flex", justifyContent:"space-between", marginTop:12 }}>
                   <button style={S.pill(false)} onClick={() => { const ks=Object.keys(TEAMS_BY_GROUP); const i=ks.indexOf(selGroup); if(i>0) setSelGroup(ks[i-1]); }} disabled={selGroup==="A"}>← Prev</button>
@@ -554,13 +592,14 @@ export default function WorldCupPool() {
                   {DAILY_PROPS.map((p, i) => {
                     const settled = liveResults?.propResults?.[i] !== null && liveResults?.propResults?.[i] !== undefined;
                     const picked  = propPicks[i] !== null;
+                    const locked  = isPropLocked(i);
                     return (
                       <button key={i} style={{
                         padding:"3px 7px", borderRadius:4, border:"none", fontSize:10, fontWeight:"bold", cursor:"pointer",
-                        background: selPropIdx===i ? "#c8a84b" : settled ? "rgba(100,200,100,0.2)" : picked ? "rgba(200,168,75,0.2)" : "rgba(255,255,255,0.08)",
-                        color: selPropIdx===i ? "#0a1628" : settled ? "#8fffb0" : picked ? "#f0d060" : "#9ab8a0",
+                        background: selPropIdx===i ? "#c8a84b" : settled ? "rgba(100,200,100,0.2)" : locked ? "rgba(200,60,60,0.15)" : picked ? "rgba(200,168,75,0.2)" : "rgba(255,255,255,0.08)",
+                        color: selPropIdx===i ? "#0a1628" : settled ? "#8fffb0" : locked && !picked ? "#ff9090" : picked ? "#f0d060" : "#9ab8a0",
                       }} onClick={() => setSelPropIdx(i)}>
-                        {p.date.replace("Jun ","")} {picked?"✓":""}
+                        {p.date.replace("Jun ","")} {locked?"🔒":picked?"✓":""}
                       </button>
                     );
                   })}
@@ -582,15 +621,26 @@ export default function WorldCupPool() {
                     </div>
                   )}
 
+                  {isPropLocked(selPropIdx) && !propSettled && (
+                    <div style={{ background:"rgba(200,60,60,0.15)", border:"1px solid rgba(200,60,60,0.3)", borderRadius:8, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#ff9090" }}>
+                      🔒 Locked — picks closed before first match of the day
+                    </div>
+                  )}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                     {[[true,"✅",prop.yes],[false,"❌",prop.no]].map(([val,icon,label]) => (
-                      <button key={String(val)} onClick={() => { const n=[...propPicks]; n[selPropIdx]=val; setPropPicks(n); }} style={{
-                        padding:"14px 8px", borderRadius:10, border:"2px solid",
-                        borderColor:propPicks[selPropIdx]===val?"#f0d060":"rgba(255,255,255,0.1)",
-                        background:propPicks[selPropIdx]===val?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
-                        color:propPicks[selPropIdx]===val?"#f0d060":"#c8b8a0",
-                        cursor:"pointer", fontSize:12, textAlign:"center", lineHeight:1.4,
-                      }}>
+                      <button key={String(val)}
+                        onClick={() => {
+                          if (isPropLocked(selPropIdx)) return;
+                          const n=[...propPicks]; n[selPropIdx]=val; setPropPicks(n);
+                        }}
+                        style={{
+                          padding:"14px 8px", borderRadius:10, border:"2px solid",
+                          borderColor:propPicks[selPropIdx]===val?"#f0d060":"rgba(255,255,255,0.1)",
+                          background:propPicks[selPropIdx]===val?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
+                          color:propPicks[selPropIdx]===val?"#f0d060":"#c8b8a0",
+                          cursor:isPropLocked(selPropIdx)?"default":"pointer", fontSize:12, textAlign:"center", lineHeight:1.4,
+                          opacity:isPropLocked(selPropIdx)&&propPicks[selPropIdx]!==val?0.4:1,
+                        }}>
                         <div style={{ fontSize:20, marginBottom:4 }}>{icon}</div>
                         <div style={{ fontWeight:propPicks[selPropIdx]===val?"bold":"normal" }}>{label}</div>
                       </button>
