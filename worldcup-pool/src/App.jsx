@@ -32,22 +32,22 @@ function hashPassword(pw) {
 
 // ── GROUPS ────────────────────────────────────────────────────────────────────
 const TEAMS_BY_GROUP = {
-  A: ["Mexico", "South Africa", "South Korea", "Czech Republic"],
+  A: ["Mexico", "South Africa", "South Korea", "Czechia"],
   B: ["Canada", "Bosnia and Herzegovina", "Qatar", "Switzerland"],
   C: ["Brazil", "Morocco", "Haiti", "Scotland"],
   D: ["USA", "Paraguay", "Australia", "Turkey"],
-  E: ["Germany", "Curacao", "Ecuador", "Ivory Coast"],
-  F: ["England", "Panama", "Croatia", "Ghana"],
-  G: ["Belgium", "New Zealand", "Egypt", "Iran"],
-  H: ["Spain", "Uruguay", "Saudi Arabia", "Cape Verde"],
+  E: ["Germany", "Curacao", "Ivory Coast", "Ecuador"],
+  F: ["Netherlands", "Japan", "Sweden", "Tunisia"],
+  G: ["Belgium", "Egypt", "Iran", "New Zealand"],
+  H: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
   I: ["France", "Senegal", "Iraq", "Norway"],
   J: ["Argentina", "Algeria", "Austria", "Jordan"],
   K: ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
-  L: ["Netherlands", "Sweden", "Morocco", "Qatar"],
+  L: ["England", "Croatia", "Ghana", "Panama"],
 };
 
 const FLAG = {
-  "Mexico":"🇲🇽","South Africa":"🇿🇦","South Korea":"🇰🇷","Czech Republic":"🇨🇿",
+  "Mexico":"🇲🇽","South Africa":"🇿🇦","South Korea":"🇰🇷","Czechia":"🇨🇿","Czech Republic":"🇨🇿",
   "Canada":"🇨🇦","Bosnia and Herzegovina":"🇧🇦","Qatar":"🇶🇦","Switzerland":"🇨🇭",
   "Brazil":"🇧🇷","Morocco":"🇲🇦","Haiti":"🇭🇹","Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿",
   "USA":"🇺🇸","Paraguay":"🇵🇾","Australia":"🇦🇺","Turkey":"🇹🇷",
@@ -58,29 +58,29 @@ const FLAG = {
   "France":"🇫🇷","Senegal":"🇸🇳","Iraq":"🇮🇶","Norway":"🇳🇴",
   "Argentina":"🇦🇷","Algeria":"🇩🇿","Austria":"🇦🇹","Jordan":"🇯🇴",
   "Portugal":"🇵🇹","DR Congo":"🇨🇩","Uzbekistan":"🇺🇿","Colombia":"🇨🇴",
-  "Netherlands":"🇳🇱","Sweden":"🇸🇪",
+  "Netherlands":"🇳🇱","Sweden":"🇸🇪","Japan":"🇯🇵","Tunisia":"🇹🇳","Panama":"🇵🇦","Croatia":"🇭🇷","Ghana":"🇬🇭",
 };
 const tf = t => FLAG[t] || "🏳️";
 
 // ── DAILY PROPS (Jun 11–27) ───────────────────────────────────────────────────
 const DAILY_PROPS = [
-  { date:"Jun 11", label:"Opening Day",  q:"Will Mexico score in the tournament opener vs South Africa?",               pts:3, yes:"Yes, El Tri score",       no:"Goalless opener" },
-  { date:"Jun 12", label:"Day 2",        q:"Will the USA win their first match vs Paraguay?",                           pts:5, yes:"USA win",                 no:"Draw or Paraguay win" },
-  { date:"Jun 13", label:"Day 3",        q:"Will Brazil score 3+ goals on Day 3?",                                     pts:5, yes:"Brazil go big",           no:"Under 3 goals" },
-  { date:"Jun 14", label:"Day 4",        q:"Will there be a red card on Day 4?",                                       pts:5, yes:"Someone sees red",        no:"All 11 stay on" },
-  { date:"Jun 15", label:"Day 5",        q:"Will France win their opening group game?",                                pts:3, yes:"Les Bleus win",           no:"Draw or loss" },
-  { date:"Jun 16", label:"Day 6",        q:"Will Argentina win their opener vs Algeria?",                              pts:3, yes:"Argentina win",          no:"Draw or upset" },
-  { date:"Jun 17", label:"Day 7",        q:"Will Portugal score 3+ goals vs DR Congo?",                               pts:5, yes:"Portugal put on a show", no:"Under 3 goals" },
-  { date:"Jun 18", label:"Day 8",        q:"Will any Day 8 match end 0-0?",                                           pts:5, yes:"Bore draw confirmed",     no:"Every game has a goal" },
-  { date:"Jun 19", label:"Day 9",        q:"Will Spain win their second group game by 2+ goals?",                     pts:5, yes:"Spain dominate",         no:"Win by 1 or less" },
-  { date:"Jun 20", label:"Day 10",       q:"Will there be a penalty scored on Day 10?",                               pts:3, yes:"Spot kick converted",     no:"No penalties" },
-  { date:"Jun 21", label:"Day 11",       q:"Will an African team win on Day 11?",                                     pts:5, yes:"African glory",          no:"No African wins" },
-  { date:"Jun 22", label:"Day 12",       q:"Will Argentina top Group J after Matchday 2?",                            pts:5, yes:"Messi's men lead",       no:"Someone else tops" },
-  { date:"Jun 23", label:"Day 13",       q:"Will any team be mathematically eliminated on Day 13?",                  pts:5, yes:"Someone goes home",      no:"Still all to play for" },
-  { date:"Jun 24", label:"Day 14",       q:"Will Germany win their final group game?",                                pts:3, yes:"Die Mannschaft win",      no:"Draw or loss" },
-  { date:"Jun 25", label:"Day 15",       q:"Will there be a last-minute winner (85'+ goal) on Day 15?",              pts:8, yes:"Late drama!",             no:"No late deciders" },
-  { date:"Jun 26", label:"Day 16",       q:"Will France top Group I with a perfect record?",                         pts:8, yes:"Perfect France",         no:"France drop points" },
-  { date:"Jun 27", label:"Final Day",    q:"Will a higher-ranked team lose on the final group stage day?",           pts:8, yes:"Shock result!",           no:"Favourites all win" },
+  { date:"Jun 11", label:"Opening Day",  q:"Will Mexico score in the tournament opener vs South Africa?",                    pts:3, yes:"Sí! Mexico score",         no:"Goalless opener" },
+  { date:"Jun 12", label:"Day 2",        q:"Will the USA win their first match vs Paraguay?",                                pts:5, yes:"USA win",                   no:"Draw or Paraguay win" },
+  { date:"Jun 13", label:"Day 3",        q:"Will Brazil beat Morocco on Day 3?",                                            pts:3, yes:"Brazil win",                no:"Draw or upset" },
+  { date:"Jun 14", label:"Day 4",        q:"Will Netherlands beat Japan on Day 4?",                                         pts:3, yes:"Netherlands win",           no:"Draw or Japan upset" },
+  { date:"Jun 15", label:"Day 5",        q:"Will Spain win their Group H opener?",                                         pts:3, yes:"Spain win",                 no:"Draw or loss" },
+  { date:"Jun 16", label:"Day 6",        q:"Will Argentina win their opener vs Algeria?",                                   pts:3, yes:"Argentina win",            no:"Draw or upset" },
+  { date:"Jun 17", label:"Day 7",        q:"Will Portugal score 3+ goals vs DR Congo?",                                    pts:5, yes:"Portugal put on a show",   no:"Under 3 goals" },
+  { date:"Jun 18", label:"Day 8",        q:"Will there be a red card on Day 8?",                                           pts:5, yes:"Someone sees red",         no:"All 11 stay on" },
+  { date:"Jun 19", label:"Day 9",        q:"Will the USA beat Australia in their second group game?",                       pts:5, yes:"USA win again",            no:"Draw or Australia win" },
+  { date:"Jun 20", label:"Day 10",       q:"Will there be a penalty scored on Day 10?",                                    pts:3, yes:"Spot kick converted",      no:"No penalties" },
+  { date:"Jun 21", label:"Day 11",       q:"Will an African team win on Day 11?",                                          pts:5, yes:"African glory",            no:"No African wins" },
+  { date:"Jun 22", label:"Day 12",       q:"Will Argentina top Group J after Matchday 2?",                                 pts:5, yes:"Messi's men lead",         no:"Someone else tops" },
+  { date:"Jun 23", label:"Day 13",       q:"Will any team be mathematically eliminated on Day 13?",                       pts:5, yes:"Someone goes home early",  no:"Still all to play for" },
+  { date:"Jun 24", label:"Day 14",       q:"Will England win their final group game vs Panama?",                           pts:3, yes:"Three Lions win",          no:"Draw or loss" },
+  { date:"Jun 25", label:"Day 15",       q:"Will there be a last-minute winner (85'+ goal) on Day 15?",                   pts:8, yes:"Late drama!",              no:"No late deciders" },
+  { date:"Jun 26", label:"Day 16",       q:"Will France top Group I with a perfect record going into the final day?",     pts:8, yes:"Perfect France",          no:"France have dropped points" },
+  { date:"Jun 27", label:"Final Day",    q:"Will a higher-ranked team lose on the final group stage day?",                pts:8, yes:"Shock result!",            no:"Favourites all win" },
 ];
 
 // ── SCORING ───────────────────────────────────────────────────────────────────
