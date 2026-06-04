@@ -502,6 +502,9 @@ export default function WorldCupPool() {
               {s==="home" ? "🏠 Home" : "🏆 Board"}
             </button>
           ))}
+          {currentPlayer && !isAdmin && (
+            <button style={S.navBtn(screen==="predict")} onClick={() => setScreen("predict")}>📋 My Picks</button>
+          )}
           {isGroupRankingsLocked() && (
             <button style={S.navBtn(screen==="picks")} onClick={() => setScreen("picks")}>👀 Picks</button>
           )}
