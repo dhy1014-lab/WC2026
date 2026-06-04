@@ -450,13 +450,11 @@ export default function WorldCupPool() {
     // Convert to CSV string
     const escape = val => {
       const str = String(val);
-      return str.includes(",") || str.includes('"') || str.includes("
-")
+      return str.includes(",") || str.includes('"') || str.includes("\n")
         ? `"${str.replace(/"/g, '""')}"`
         : str;
     };
-    const csv = [headers, ...rows].map(row => row.map(escape).join(",")).join("
-");
+    const csv = [headers, ...rows].map(row => row.map(escape).join(",")).join("\n");
 
     // Download
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
