@@ -274,13 +274,17 @@ export default function WorldCupPool() {
   const [predictions, setPredictions]     = useState({});
   const [dbLoading, setDbLoading]         = useState(true);
   const [dbError, setDbError]             = useState("");
-  const [currentPlayer, setCurrentPlayer] = useState(null);
+  const [currentPlayer, setCurrentPlayer] = useState(() => {
+    try { const s = localStorage.getItem("wc2026_session"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
+  const [isAdmin, setIsAdmin]             = useState(() => {
+    try { return localStorage.getItem("wc2026_admin") === "true"; } catch { return false; }
+  });
   const [newName, setNewName]             = useState("");
   const [newPassword, setNewPassword]     = useState("");
   const [loginName, setLoginName]         = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError]       = useState("");
-  const [isAdmin, setIsAdmin]             = useState(false);
 
   const [predTab, setPredTab]             = useState("groups");
   const [selGroup, setSelGroup]           = useState("A");
@@ -289,20 +293,46 @@ export default function WorldCupPool() {
   const [propPicks, setPropPicks]         = useState(Array(17).fill(null));
   const [saved, setSaved]                 = useState(false);
   const [saving, setSaving]               = useState(false);
+  const [viewingPlayer, setViewingPlayer] = useState(null);
 
   const [liveResults, setLiveResults]     = useState(null);
   const [fetchStatus, setFetchStatus]     = useState("idle");
   const [fetchError, setFetchError]       = useState("");
   const [lastFetched, setLastFetched]     = useState(null);
 
-  // Load from Supabase on mount
+  // Load from Firebase on mount
   useEffect(() => {
     dbLoad()
-      .then(data => { setPlayers(data.players); setPredictions(data.predictions); setDbLoading(false); })
+      .then(data => {
+        setPlayers(data.players);
+        setPredictions(data.predictions);
+        setDbLoading(false);
+        // Restore session state
+        try {
+          const s = localStorage.getItem("wc2026_session");
+          const admin = localStorage.getItem("wc2026_admin") === "true";
+          if (s) {
+            const saved = JSON.parse(s);
+            if (admin) {
+              setScreen("admin");
+            } else {
+              const player = data.players.find(p => p.id === saved.id);
+              if (player) {
+                const e = data.predictions[player.id] || {};
+                setGroupRankings(e.groupRankings || {});
+                setPropPicks(e.propPicks || Array(17).fill(null));
+                setScreen("predict");
+              } else {
+                localStorage.removeItem("wc2026_session");
+              }
+            }
+          }
+        } catch {}
+      })
       .catch(e => { setDbError(e.message); setDbLoading(false); });
   }, []);
 
-  // Poll Supabase every 30s
+  // Poll Firebase every 30s
   useEffect(() => {
     const iv = setInterval(() => {
       dbLoad().then(data => { setPlayers(data.players); setPredictions(data.predictions); }).catch(() => {});
@@ -330,6 +360,7 @@ export default function WorldCupPool() {
     await dbSave(np, predictions);
     setCurrentPlayer(player);
     setIsAdmin(false);
+    try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     setNewName(""); setNewPassword("");
     setGroupRankings({}); setPropPicks(Array(17).fill(null));
     setScreen("predict");
@@ -343,6 +374,7 @@ export default function WorldCupPool() {
     if (name === ADMIN.name && pw === ADMIN.passwordHash) {
       setCurrentPlayer({ name, id: "admin" });
       setIsAdmin(true);
+      try { localStorage.setItem("wc2026_session", JSON.stringify({ name, id: "admin" })); localStorage.setItem("wc2026_admin", "true"); } catch {}
       setLoginName(""); setLoginPassword("");
       setScreen("admin");
       return;
@@ -353,6 +385,7 @@ export default function WorldCupPool() {
     if (player.passwordHash !== hashPassword(pw)) { setLoginError("Wrong password"); return; }
     setCurrentPlayer(player);
     setIsAdmin(false);
+    try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     const e = predictions[player.id] || {};
     setGroupRankings(e.groupRankings || {});
     setPropPicks(e.propPicks || Array(17).fill(null));
@@ -391,6 +424,50 @@ export default function WorldCupPool() {
   const propWon    = propSettled && propPicks[selPropIdx] === propActual;
   const propLost   = propSettled && propPicks[selPropIdx] !== null && !propWon;
 
+  function exportCSV() {
+    const groupKeys = Object.keys(TEAMS_BY_GROUP);
+    // Build header row
+    const groupHeaders = groupKeys.map(g => `Group ${g} (1st,2nd,3rd,4th)`);
+    const propHeaders = DAILY_PROPS.map(p => `Prop: ${p.date} - ${p.q.substring(0,40)}...`);
+    const headers = ["Player", "Points", ...groupHeaders, ...propHeaders];
+
+    // Build rows
+    const rows = players.map(p => {
+      const pred = predictions[p.id] || {};
+      const pts = calcPoints(pred, liveResults);
+      const groupCols = groupKeys.map(g => {
+        const r = pred.groupRankings?.[g];
+        return r ? r.join(" > ") : "";
+      });
+      const propCols = DAILY_PROPS.map((_, i) => {
+        const pick = pred.propPicks?.[i];
+        if (pick === null || pick === undefined) return "";
+        return pick ? "YES" : "NO";
+      });
+      return [p.name, pts, ...groupCols, ...propCols];
+    });
+
+    // Convert to CSV string
+    const escape = val => {
+      const str = String(val);
+      return str.includes(",") || str.includes('"') || str.includes("
+")
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    };
+    const csv = [headers, ...rows].map(row => row.map(escape).join(",")).join("
+");
+
+    // Download
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wc2026-pool-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   if (dbLoading) return (
     <div style={{ ...S.page, display:"flex", alignItems:"center", justifyContent:"center" }}>
       <div style={{ textAlign:"center" }}>
@@ -427,6 +504,9 @@ export default function WorldCupPool() {
               {s==="home" ? "🏠 Home" : "🏆 Board"}
             </button>
           ))}
+          {isGroupRankingsLocked() && (
+            <button style={S.navBtn(screen==="picks")} onClick={() => setScreen("picks")}>👀 Picks</button>
+          )}
           {isAdmin && (
             <button style={S.navBtn(screen==="admin")} onClick={() => setScreen("admin")}>⚙️ Admin</button>
           )}
@@ -456,7 +536,7 @@ export default function WorldCupPool() {
             <div style={{ textAlign:"center", marginBottom:22 }}>
               <div style={{ fontSize:44, marginBottom:6 }}>🏆</div>
               <h1 style={{ margin:0, fontSize:24, color:"#f0d060" }}>World Cup Pool</h1>
-              <p style={{ color:"#9ab8a0", fontSize:12, margin:"4px 0 0" }}>Phase 1: Group Stage · June 11–27 · Backed by Supabase ☁️</p>
+              <p style={{ color:"#9ab8a0", fontSize:12, margin:"4px 0 0" }}>Phase 1: Group Stage · June 11–27 · Backed by Firebase ☁️</p>
             </div>
 
             <div style={S.card}>
@@ -473,8 +553,22 @@ export default function WorldCupPool() {
               ))}
             </div>
 
+            <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.08)" }}>
+              <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>🔒 WHEN PICKS LOCK</div>
+              {[
+                ["🏅 Group Rankings", "Lock at tournament kickoff — Jun 11 at 3pm ET (Mexico vs South Africa). You cannot change your group standings after this."],
+                ["🎲 Daily Props", "Each prop locks before the first match of that day. Once the day's games start, your answer is final."],
+                ["⚠️ Submit early!", "Don't wait until the last minute — picks that aren't saved before the deadline won't count."],
+              ].map(([l,v]) => (
+                <div key={l} style={{ padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:12 }}>
+                  <span style={{ color:"#f0d060", fontWeight:"bold" }}>{l} </span>
+                  <span style={{ color:"#9ab8a0" }}>{v}</span>
+                </div>
+              ))}
+            </div>
+
             <div style={{ ...S.card, borderColor:"rgba(100,200,255,0.3)", background:"rgba(0,80,160,0.15)" }}>
-              <div style={{ fontSize:12, color:"#80d0ff" }}>☁️ <strong>Persistent pool</strong> — data saved to Supabase. Share this link with anyone; their picks save permanently and the leaderboard updates for everyone in real time.</div>
+              <div style={{ fontSize:12, color:"#80d0ff" }}>☁️ <strong>Persistent pool</strong> — data saved to Firebase. Share this link with anyone; their picks save permanently and the leaderboard updates for everyone in real time.</div>
             </div>
 
             {/* Login */}
@@ -525,7 +619,8 @@ export default function WorldCupPool() {
                 <div style={{ fontSize:11, color:"#9ab8a0" }}>{groupsDone}/12 groups · {propsDone}/17 props</div>
               </div>
               <div style={{ display:"flex", gap:8 }}>
-                <button onClick={() => setScreen("home")} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Back</button>
+                <button onClick={() => setScreen("home")} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Home</button>
+                <button onClick={() => { setCurrentPlayer(null); setIsAdmin(false); setScreen("home"); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>Logout</button>
                 <button onClick={savePreds} disabled={saving} style={{ ...S.btn, background:saved?"#2a6040":saving?"#555":"linear-gradient(90deg,#c8a84b,#f0d060)", color:saved?"#8fffb0":"#0a1628" }}>
                   {saving ? "Saving…" : saved ? "✓ Saved!" : "Save"}
                 </button>
@@ -663,7 +758,10 @@ export default function WorldCupPool() {
           <div>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>⚙️ Admin Panel</h2>
-              <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={exportCSV} style={{ ...S.btn, fontSize:11, padding:"6px 12px" }}>⬇️ Export CSV</button>
+                <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
+              </div>
             </div>
             <div style={S.card}>
               <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1 }}>PLAYERS — click 🗑 to delete</div>
@@ -678,6 +776,98 @@ export default function WorldCupPool() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* ── ALL PICKS ── */}
+        {screen==="picks" && (
+          <div>
+            <div style={{ marginBottom:14 }}>
+              <h2 style={{ margin:"0 0 4px", fontSize:20, color:"#f0d060" }}>👀 Everyone's Picks</h2>
+              <p style={{ fontSize:12, color:"#9ab8a0", margin:0 }}>Picks are visible now that the group stage has locked.</p>
+            </div>
+
+            {/* Player selector */}
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:16 }}>
+              {players.map(p => (
+                <button key={p.id}
+                  onClick={() => setViewingPlayer(viewingPlayer?.id===p.id ? null : p)}
+                  style={{
+                    padding:"6px 14px", borderRadius:20, border:"1px solid",
+                    borderColor:viewingPlayer?.id===p.id?"#f0d060":"rgba(200,168,75,0.3)",
+                    background:viewingPlayer?.id===p.id?"rgba(200,168,75,0.25)":"rgba(200,168,75,0.08)",
+                    color:"#f0d060", cursor:"pointer", fontSize:13,
+                  }}>{p.name}</button>
+              ))}
+            </div>
+
+            {viewingPlayer && (() => {
+              const pred = predictions[viewingPlayer.id] || {};
+              const pts = calcPoints(pred, liveResults);
+              return (
+                <div>
+                  <div style={{ ...S.card, borderColor:"rgba(200,168,75,0.4)" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                      <div style={{ fontSize:16, color:"#f0d060", fontWeight:"bold" }}>{viewingPlayer.name}</div>
+                      <div style={{ fontSize:22, fontWeight:"bold", color:"#f0d060" }}>{pts} pts</div>
+                    </div>
+
+                    {/* Group rankings */}
+                    <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", letterSpacing:1, marginBottom:8 }}>🏅 GROUP RANKINGS</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:14 }}>
+                      {Object.keys(TEAMS_BY_GROUP).map(g => {
+                        const ranking = pred.groupRankings?.[g];
+                        const actual = liveResults?.groupRankings?.[g];
+                        return (
+                          <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"8px 10px" }}>
+                            <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>GROUP {g}</div>
+                            {ranking ? ranking.map((team, i) => {
+                              const actualPos = actual?.indexOf(team);
+                              const correct = actualPos === i;
+                              const halfRight = actual && actualPos !== -1 && Math.floor(actualPos/2) === Math.floor(i/2) && !correct;
+                              return (
+                                <div key={team} style={{ fontSize:11, color: correct?"#8fffb0":halfRight?"#f0d060":"#c8b8a0", display:"flex", alignItems:"center", gap:4, marginBottom:2 }}>
+                                  <span>{["🥇","🥈","🥉","4️⃣"][i]}</span>
+                                  <span>{tf(team)} {team}</span>
+                                  {correct && <span style={{ marginLeft:"auto" }}>+3</span>}
+                                  {halfRight && <span style={{ marginLeft:"auto" }}>+1</span>}
+                                </div>
+                              );
+                            }) : <div style={{ fontSize:11, color:"#9ab8a0" }}>No pick</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Props */}
+                    <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", letterSpacing:1, marginBottom:8 }}>🎲 DAILY PROPS</div>
+                    {DAILY_PROPS.map((prop, i) => {
+                      const pick = pred.propPicks?.[i];
+                      const actual = liveResults?.propResults?.[i];
+                      const settled = actual !== null && actual !== undefined;
+                      const won = settled && pick === actual;
+                      const lost = settled && pick !== null && pick !== undefined && !won;
+                      return (
+                        <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:11, gap:8 }}>
+                          <span style={{ color:"#9ab8a0", minWidth:40 }}>{prop.date}</span>
+                          <span style={{ flex:1, color:"#c8b8a0" }}>{prop.q.substring(0,50)}…</span>
+                          <span style={{ fontWeight:"bold", color: won?"#8fffb0":lost?"#ff9090":pick===true?"#f0d060":pick===false?"#c8b8a0":"#555", minWidth:30, textAlign:"right" }}>
+                            {pick===null||pick===undefined ? "—" : pick ? "YES" : "NO"}
+                            {won ? " ✓" : lost ? " ✗" : ""}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {!viewingPlayer && (
+              <div style={{ color:"#9ab8a0", fontSize:13, textAlign:"center", marginTop:20 }}>
+                Select a player above to see their picks
+              </div>
+            )}
           </div>
         )}
 
