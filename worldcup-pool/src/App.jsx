@@ -1513,34 +1513,32 @@ export default function WorldCupPool() {
               </div>
             )}
 
-            {/* Pot summary */}
+            {/* Pot summary + rows wrapped in single IIFE for shared scope */}
             {(() => {
               const { pot1, pot2, paidCount } = calcPot(players, paid, settings);
               const prizes1 = calcPrizes(leaderboard, paid, pot1);
               const prizes2 = calcPrizes(leaderboard, paid, pot2);
               return (
-                <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
-                  <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 THE POTS · {paidCount} paid</div>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                    <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
-                      <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 1 — GROUP STAGE</div>
-                      <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot1}</div>
-                      {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round(pot1*0.6)} · 🥈 ${Math.round(pot1*0.3)} · 🥉 ${Math.round(pot1*0.1)}</div>}
-                      {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place refunded</div>}
-                    </div>
-                    <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
-                      <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 2 — KNOCKOUTS</div>
-                      <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot2}</div>
-                      {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round(pot2*0.6)} · 🥈 ${Math.round(pot2*0.3)} · 🥉 ${Math.round(pot2*0.1)}</div>}
-                      {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place refunded</div>}
+                <div>
+                  <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 THE POTS · {paidCount} paid</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                      <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                        <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 1 — GROUP STAGE</div>
+                        <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot1}</div>
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round(pot1*0.6)} · 🥈 ${Math.round(pot1*0.3)} · 🥉 ${Math.round(pot1*0.1)}</div>}
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place refunded</div>}
+                      </div>
+                      <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                        <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 2 — KNOCKOUTS</div>
+                        <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot2}</div>
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round(pot2*0.6)} · 🥈 ${Math.round(pot2*0.3)} · 🥉 ${Math.round(pot2*0.1)}</div>}
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place refunded</div>}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })()}
-
-            {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet — go to Home to join!</div>}
-            {leaderboard.map((p, i) => {
+                  {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet — go to Home to join!</div>}
+                  {leaderboard.map((p, i) => {
               const pred = predictions[p.id];
               const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
               const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
@@ -1568,9 +1566,12 @@ export default function WorldCupPool() {
                 </div>
               );
             })}
-            <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", marginTop:8 }}>
-              Leaderboard syncs every 30s. Phase 2 (knockouts) unlocks after June 27. 🔜
-            </div>
+                  <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", marginTop:8 }}>
+                    Leaderboard syncs every 30s. Phase 2 (knockouts) unlocks after June 27. 🔜
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
