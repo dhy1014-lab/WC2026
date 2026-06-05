@@ -361,13 +361,12 @@ async function fetchLivePhase2() {
     matches.map(m => `${m.id} (${ROUND_LABELS[round]}: ${m.label}): winner team name or null`)
   ).join("\n");
 
+  const matchIds = Object.values(KNOCKOUT_ROUNDS).flat().map(m => `"${m.id}": null`).join(", ");
   const prompt = `Search the web for 2026 FIFA World Cup knockout stage results (starting June 28 2026).
 
 Return ONLY valid JSON, no markdown:
 {
-  "knockoutWinners": {
-    ${Object.entries(KNOCKOUT_ROUNDS).flatMap(([,matches]) => matches.map(m => `"${m.id}": null`)).join(',')}
-  },
+  "knockoutWinners": { ${matchIds} },
   "lastUpdated": "ISO timestamp"
 }
 
@@ -1573,7 +1572,7 @@ export default function WorldCupPool() {
               const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
               const hasPaid1 = paid[p.id+"_1"];
               const hasPaid2 = paid[p.id+"_2"];
-              const prizes = calcPrizes(leaderboard, paid, settings);
+              
               const prize = prizes[p.id];
               return (
                 <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
