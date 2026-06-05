@@ -1510,32 +1510,6 @@ export default function WorldCupPool() {
             {liveResults && (
               <div style={{ ...S.card, fontSize:12, color:"#9ab8a0" }}>
                 <span style={{ color:"#f0d060" }}>📡</span> {liveResults.matchday||"Group Stage"} · {Object.values(liveResults.groupRankings||{}).filter(Boolean).length}/12 groups final · {(liveResults.propResults||[]).filter(v=>v!==null).length}/17 props settled
-              {/* Phase 2 Tiebreaker — shown when on Final round */}
-              {phase2Tab === "final" && (
-                <div style={{ ...S.card, marginTop:8, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
-                  <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 2 TIEBREAKER</div>
-                  <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P2.question}</div>
-                  <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, lineHeight:1.5 }}>{TIEBREAKER_P2.hint}</div>
-                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-                    {TIEBREAKER_P2.references.map(r => (
-                      <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"5px 10px", fontSize:11 }}>
-                        <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.matchup}</span> <span style={{ color:"#9ab8a0" }}>· {r.minute}'</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <input type="number" min="1" max="120" value={tbP2}
-                      onChange={e => setTbP2(e.target.value)}
-                      placeholder="Your guess…"
-                      style={{ ...S.input, width:120, fontSize:16, textAlign:"center" }}
-                      disabled={isPhase2Locked()}
-                    />
-                    <span style={{ fontSize:12, color:"#9ab8a0" }}>minute</span>
-                    {tbP2 && <span style={{ fontSize:12, color:"#f0d060" }}>✓ {tbP2}'</span>}
-                  </div>
-                  {isPhase2Locked() && <div style={{ fontSize:11, color:"#ff9090", marginTop:6 }}>🔒 Locked</div>}
-                </div>
-              )}
               </div>
             )}
 
