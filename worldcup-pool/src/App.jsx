@@ -366,7 +366,7 @@ async function fetchLivePhase2() {
 Return ONLY valid JSON, no markdown:
 {
   "knockoutWinners": {
-    ${Object.entries(KNOCKOUT_ROUNDS).flatMap(([,matches]) => matches.map(m => `"${m.id}": null`)).join(',    ')}
+    ${Object.entries(KNOCKOUT_ROUNDS).flatMap(([,matches]) => matches.map(m => `"${m.id}": null`)).join(',')}
   },
   "lastUpdated": "ISO timestamp"
 }
