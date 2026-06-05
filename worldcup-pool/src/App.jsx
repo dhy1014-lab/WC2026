@@ -1570,10 +1570,7 @@ export default function WorldCupPool() {
               const pred = predictions[p.id];
               const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
               const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
-              const hasPaid1 = paid[p.id+"_1"];
-              const hasPaid2 = paid[p.id+"_2"];
-              
-              const prize = prizes[p.id];
+
               return (
                 <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
                   <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`}</div>
