@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 const DB_URL = "https://wc2026-306ec-default-rtdb.firebaseio.com";
@@ -36,8 +36,8 @@ async function loadMessages() {
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
-async function postMessage(author, text, isAdmin) {
-  const msg = { author, text, timestamp: Date.now(), isAdmin: isAdmin || false };
+async function postMessage(author, text, isAdmin, pinned = false) {
+  const msg = { author, text, timestamp: Date.now(), isAdmin: isAdmin || false, pinned: pinned || false };
   await fetch(`${DB_URL}/messages.json`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -47,6 +47,53 @@ async function postMessage(author, text, isAdmin) {
 
 async function deleteMessage(id) {
   await fetch(`${DB_URL}/messages/${id}.json`, { method: "DELETE" });
+}
+
+// ── REACTIONS ────────────────────────────────────────────────────────────────
+async function loadReactions() {
+  const r = await fetch(`${DB_URL}/reactions.json`);
+  if (!r.ok) return {};
+  const data = await r.json();
+  return data || {};
+}
+
+async function toggleReaction(msgId, emoji, playerName) {
+  const emojiKey = encodeURIComponent(emoji);
+  const r = await fetch(`${DB_URL}/reactions/${msgId}/${emojiKey}/${playerName}.json`);
+  const existing = await r.json();
+  if (existing) {
+    await fetch(`${DB_URL}/reactions/${msgId}/${emojiKey}/${playerName}.json`, { method: "DELETE" });
+  } else {
+    await fetch(`${DB_URL}/reactions/${msgId}/${emojiKey}/${playerName}.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(true),
+    });
+  }
+}
+
+// ── HOT TAKES ────────────────────────────────────────────────────────────────
+async function loadHotTakes() {
+  const r = await fetch(`${DB_URL}/hottakes.json`);
+  if (!r.ok) return {};
+  const data = await r.json();
+  return data || {};
+}
+
+async function submitHotTake(playerId, playerName, propIdx, pick) {
+  await fetch(`${DB_URL}/hottakes/${playerId}.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ playerId, playerName, propIdx, pick, timestamp: Date.now(), votes: {} }),
+  });
+}
+
+async function voteHotTake(ownerId, voterName, vote) {
+  await fetch(`${DB_URL}/hottakes/${ownerId}/votes/${voterName}.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(vote),
+  });
 }
 
 // ── AUTH HELPERS ─────────────────────────────────────────────────────────────
@@ -287,6 +334,29 @@ const MAX_RANKING_PTS = 12 * 4 * 3; // 144
 const MAX_PROP_PTS = DAILY_PROPS.reduce((s, p) => s + p.pts, 0);
 const MAX_PTS = MAX_RANKING_PTS + MAX_PROP_PTS;
 
+// Points progression per settled prop — used for sparkline chart
+function calcPointsTimeline(pred, live) {
+  if (!pred || !live) return [];
+  const propResults = live.propResults || [];
+  let running = 0;
+  // Group ranking points (settled at end of group stage, represented as baseline)
+  Object.entries(pred.groupRankings || {}).forEach(([g, ranking]) => {
+    const actual = live.groupRankings?.[g];
+    if (actual) running += calcGroupRankingPoints(ranking, actual);
+  });
+  const points = [];
+  propResults.forEach((result, i) => {
+    if (result === null || result === undefined) return;
+    const pick = pred.propPicks?.[i];
+    if (pick === result) running += DAILY_PROPS[i].pts;
+    points.push({ label: DAILY_PROPS[i].date, pts: running, propIdx: i });
+  });
+  return points;
+}
+
+// Player color palette for chart lines
+const PLAYER_COLORS = ["#f0d060","#60c0ff","#80ff90","#ff8090","#c080ff","#ffb060","#60ffe0","#ff60c0","#a0c060","#60a0ff"];
+
 // ── POT CALCULATIONS ─────────────────────────────────────────────────────────
 function calcPot(players, paid, settings) {
   const paidCount = players.filter(p => paid[p.id]).length;
@@ -295,14 +365,16 @@ function calcPot(players, paid, settings) {
   return { pot1, pot2, total: pot1 + pot2, paidCount };
 }
 
-function calcPrizes(rankedPlayers, paid, potAmount) {
+function calcPrizes(rankedPlayers, paid, potAmount, entryFee) {
   const paidPlayers = rankedPlayers.filter(p => paid[p.id]);
   if (paidPlayers.length < 3 || potAmount === 0) return {};
   const prizes = {};
-  prizes[paidPlayers[paidPlayers.length - 1].id] = "refund";
-  prizes[paidPlayers[0].id] = Math.round(potAmount * 0.60);
-  prizes[paidPlayers[1].id] = Math.round(potAmount * 0.30);
-  prizes[paidPlayers[2].id] = Math.round(potAmount * 0.10);
+  const last = paidPlayers[paidPlayers.length - 1];
+  prizes[last.id] = entryFee; // refund = entry fee back
+  const distributable = potAmount - entryFee;
+  prizes[paidPlayers[0].id] = Math.round(distributable * 0.60);
+  prizes[paidPlayers[1].id] = Math.round(distributable * 0.30);
+  prizes[paidPlayers[2].id] = Math.round(distributable * 0.10);
   return prizes;
 }
 
@@ -405,6 +477,202 @@ const S = {
   navBtn: (a) => ({ background:a?"#0a1628":"rgba(10,22,40,0.3)", color:a?"#f0d060":"#0a1628", border:"none", borderRadius:4, padding:"4px 10px", fontSize:11, cursor:"pointer", fontWeight:"bold" }),
   pill: (a) => ({ padding:"3px 10px", borderRadius:4, border:"none", background:a?"#c8a84b":"rgba(255,255,255,0.08)", color:a?"#0a1628":"#9ab8a0", cursor:"pointer", fontSize:11, fontWeight:"bold" }),
 };
+
+// ── CONFETTI ──────────────────────────────────────────────────────────────────
+function Confetti({ onDone }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const pieces = Array.from({ length: 80 }, () => ({
+      x: Math.random() * canvas.width,
+      y: -20 - Math.random() * 100,
+      w: 8 + Math.random() * 8,
+      h: 5 + Math.random() * 5,
+      color: ["#f0d060","#60c0ff","#80ff90","#ff8090","#c080ff","#ffb060"][Math.floor(Math.random()*6)],
+      vx: (Math.random() - 0.5) * 4,
+      vy: 3 + Math.random() * 3,
+      angle: Math.random() * Math.PI * 2,
+      va: (Math.random() - 0.5) * 0.2,
+    }));
+    let frame, isDone = false;
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      pieces.forEach(p => {
+        p.x += p.vx; p.y += p.vy; p.angle += p.va;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+        ctx.fillStyle = p.color; ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+        ctx.restore();
+      });
+      if (!isDone && pieces.every(p => p.y > canvas.height)) { isDone = true; onDone && onDone(); }
+      else frame = requestAnimationFrame(draw);
+    }
+    draw();
+    const timer = setTimeout(() => { isDone = true; onDone && onDone(); }, 3500);
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+  }, []);
+  return <canvas ref={canvasRef} style={{ position:"fixed", top:0, left:0, width:"100vw", height:"100vh", pointerEvents:"none", zIndex:9999 }} />;
+}
+
+// ── SPARKLINE CHART ───────────────────────────────────────────────────────────
+function SparklineChart({ players, predictions, liveResults }) {
+  const W = 620, H = 200, PAD = { t:20, r:20, b:50, l:44 };
+  const innerW = W - PAD.l - PAD.r;
+  const innerH = H - PAD.t - PAD.b;
+
+  const timelines = players.map((p, pi) => ({
+    name: p.name,
+    color: PLAYER_COLORS[pi % PLAYER_COLORS.length],
+    points: calcPointsTimeline(predictions[p.id], liveResults),
+  }));
+
+  const settledCount = (liveResults?.propResults || []).filter(v => v !== null && v !== undefined).length;
+  if (settledCount === 0) {
+    return <div style={{ textAlign:"center", padding:"24px 0", color:"#9ab8a0", fontSize:13 }}>Chart will appear once props start settling (Jun 11+)</div>;
+  }
+
+  const allPts = timelines.flatMap(t => t.points.map(p => p.pts));
+  const maxY = Math.max(...allPts, 10);
+  const xCount = settledCount;
+
+  const px = (i) => PAD.l + (xCount <= 1 ? innerW / 2 : (i / (xCount - 1)) * innerW);
+  const py = (v) => PAD.t + innerH - (v / maxY) * innerH;
+  const yTicks = [0, Math.round(maxY * 0.5), maxY];
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", maxWidth:W, display:"block", overflow:"visible" }}>
+      {yTicks.map(v => (
+        <g key={v}>
+          <line x1={PAD.l} x2={W-PAD.r} y1={py(v)} y2={py(v)} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
+          <text x={PAD.l-6} y={py(v)+4} fill="#9ab8a0" fontSize="10" textAnchor="end">{v}</text>
+        </g>
+      ))}
+      {timelines[0]?.points.map((p, i) => (
+        (i === 0 || i === timelines[0].points.length - 1 || i % Math.ceil(xCount / 5) === 0) && (
+          <text key={i} x={px(i)} y={H-PAD.b+14} fill="#9ab8a0" fontSize="9" textAnchor="middle">{p.label.replace("Jun ","")}</text>
+        )
+      ))}
+      {timelines.map(t => {
+        if (t.points.length === 0) return null;
+        const pts = [{ label:"Start", pts:0 }, ...t.points];
+        const d = pts.map((p, i) => `${i===0?"M":"L"} ${px(i===0?0:i-1)} ${py(p.pts)}`).join(" ");
+        return (
+          <g key={t.name}>
+            <path d={d} fill="none" stroke={t.color} strokeWidth="2" strokeLinejoin="round" opacity="0.85" />
+            {t.points.map((p, i) => (
+              <circle key={i} cx={px(i)} cy={py(p.pts)} r="3" fill={t.color} opacity="0.9" />
+            ))}
+          </g>
+        );
+      })}
+      {timelines.map((t, i) => (
+        <g key={t.name} transform={`translate(${PAD.l + (i % 4) * 148}, ${H - 10})`}>
+          <circle cx="5" cy="-2" r="4" fill={t.color} />
+          <text x="12" y="1" fill={t.color} fontSize="10">{t.name}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ── HEAD-TO-HEAD MODAL ────────────────────────────────────────────────────────
+function H2HModal({ playerA, playerB, predictions, liveResults, onClose }) {
+  const predA = predictions[playerA.id] || {};
+  const predB = predictions[playerB.id] || {};
+  const propResults = liveResults?.propResults || [];
+  let agree = 0, disagree = 0, aWins = 0, bWins = 0;
+  DAILY_PROPS.forEach((_, i) => {
+    const pa = predA.propPicks?.[i], pb = predB.propPicks?.[i];
+    const actual = propResults[i];
+    if (pa == null || pb == null) return;
+    if (pa === pb) { agree++; }
+    else {
+      disagree++;
+      if (actual != null) { if (pa === actual) aWins++; if (pb === actual) bWins++; }
+    }
+  });
+  const ptsA = calcPoints(predA, liveResults);
+  const ptsB = calcPoints(predB, liveResults);
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.78)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={onClose}>
+      <div style={{ background:"#0d2040", border:"1px solid rgba(200,168,75,0.4)", borderRadius:14, padding:20, maxWidth:520, width:"100%", maxHeight:"82vh", overflowY:"auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <div style={{ fontSize:16, color:"#f0d060", fontWeight:"bold" }}>⚔️ Head-to-Head</div>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:18 }}>✕</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:8, marginBottom:16, alignItems:"center" }}>
+          <div style={{ background:"rgba(200,168,75,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
+            <div style={{ fontSize:14, color:"#f0d060", fontWeight:"bold" }}>{playerA.name}</div>
+            <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060" }}>{ptsA}</div>
+            <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
+          </div>
+          <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center" }}>VS</div>
+          <div style={{ background:"rgba(96,192,255,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
+            <div style={{ fontSize:14, color:"#60c0ff", fontWeight:"bold" }}>{playerB.name}</div>
+            <div style={{ fontSize:28, fontWeight:"bold", color:"#60c0ff" }}>{ptsB}</div>
+            <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
+          </div>
+        </div>
+        <div style={{ ...S.card, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, textAlign:"center", marginBottom:12 }}>
+          <div><div style={{ fontSize:18, fontWeight:"bold", color:"#8fffb0" }}>{agree}</div><div style={{ fontSize:10, color:"#9ab8a0" }}>agree</div></div>
+          <div><div style={{ fontSize:18, fontWeight:"bold", color:"#ff9090" }}>{disagree}</div><div style={{ fontSize:10, color:"#9ab8a0" }}>clash</div></div>
+          <div>
+            <div style={{ fontSize:10, color:"#9ab8a0" }}>clash wins</div>
+            <div style={{ fontSize:12 }}><span style={{ color:"#f0d060" }}>{playerA.name.split(" ")[0]} {aWins}</span>{" – "}<span style={{ color:"#60c0ff" }}>{bWins} {playerB.name.split(" ")[0]}</span></div>
+          </div>
+        </div>
+        <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 PROP PICKS</div>
+        {DAILY_PROPS.map((prop, i) => {
+          const pa = predA.propPicks?.[i], pb = predB.propPicks?.[i];
+          const actual = propResults[i];
+          const settled = actual != null;
+          const same = pa != null && pb != null && pa === pb;
+          const diff = pa != null && pb != null && pa !== pb;
+          return (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:11 }}>
+              <span style={{ color:"#9ab8a0", minWidth:36 }}>{prop.date}</span>
+              <span style={{ flex:1, color:"#c8b8a0", fontSize:10 }}>{prop.q.substring(0,42)}…</span>
+              <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pa==null?"#555": settled&&pa===actual?"#8fffb0": settled&&pa!==actual?"#ff9090":"#f0d060" }}>{pa==null?"—":pa?"Y":"N"}</span>
+              <span style={{ color: same?"#8fffb0":diff?"#ff9090":"#555", fontSize:14, minWidth:16, textAlign:"center" }}>{same?"=":diff?"≠":"·"}</span>
+              <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pb==null?"#555": settled&&pb===actual?"#8fffb0": settled&&pb!==actual?"#ff9090":"#60c0ff" }}>{pb==null?"—":pb?"Y":"N"}</span>
+            </div>
+          );
+        })}
+        <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🏅 GROUP RANKINGS</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+          {Object.keys(TEAMS_BY_GROUP).map(g => {
+            const ra = predA.groupRankings?.[g], rb = predB.groupRankings?.[g];
+            const actual = liveResults?.groupRankings?.[g];
+            const ptA = actual && ra ? calcGroupRankingPoints(ra, actual) : null;
+            const ptB = actual && rb ? calcGroupRankingPoints(rb, actual) : null;
+            return (
+              <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"6px 8px" }}>
+                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
+                  <span>GROUP {g}</span>
+                  {ptA !== null && <span><span style={{ color:"#f0d060" }}>{ptA}</span><span style={{ color:"#9ab8a0" }}>–</span><span style={{ color:"#60c0ff" }}>{ptB}</span></span>}
+                </div>
+                {["🥇","🥈","🥉","4️⃣"].map((medal, i) => {
+                  const ta = ra?.[i], tb = rb?.[i], match = ta && tb && ta === tb;
+                  return (
+                    <div key={i} style={{ display:"flex", gap:4, fontSize:10, marginBottom:1 }}>
+                      <span>{medal}</span>
+                      <span style={{ color:match?"#8fffb0":"#f0d060", flex:1 }}>{ta||"—"}</span>
+                      <span style={{ color:"#555" }}>|</span>
+                      <span style={{ color:match?"#8fffb0":"#60c0ff", flex:1, textAlign:"right" }}>{tb||"—"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── DRAG-TO-RANK ──────────────────────────────────────────────────────────────
 function RankPicker({ teams, ranking, onChange, locked=false }) {
@@ -519,6 +787,18 @@ export default function WorldCupPool() {
   const [tbP1, setTbP1]                   = useState("");
   const [tbP2, setTbP2]                   = useState("");
 
+  // ── NEW FEATURE STATE ─────────────────────────────────────────────────────
+  const [reactions, setReactions]         = useState({});
+  const [hotTakes, setHotTakes]           = useState({});
+  const [showConfetti, setShowConfetti]   = useState(false);
+  const [confettiProp, setConfettiProp]   = useState(null);
+  const [h2hPlayerA, setH2hPlayerA]       = useState(null);
+  const [h2hPlayerB, setH2hPlayerB]       = useState(null);
+  const [lbTab, setLbTab]                 = useState("standings");
+  const [adminPinMsg, setAdminPinMsg]     = useState("");
+  const [prevPropResults, setPrevPropResults] = useState(null);
+  const [myHotTakePropIdx, setMyHotTakePropIdx] = useState(null);
+
   // Load from Firebase on mount
   useEffect(() => {
     dbLoad()
@@ -561,6 +841,8 @@ export default function WorldCupPool() {
   // Load messages on mount
   useEffect(() => {
     loadMessages().then(setMessages).catch(() => {});
+    loadReactions().then(setReactions).catch(() => {});
+    loadHotTakes().then(setHotTakes).catch(() => {});
   }, []);
 
   // Poll Firebase every 30s
@@ -568,6 +850,8 @@ export default function WorldCupPool() {
     const iv = setInterval(() => {
       dbLoad().then(data => { setPlayers(data.players); setPredictions(data.predictions); setPaid(data.paid || {}); setSettings(data.settings || { fee1:10, fee2:10 }); }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
+      loadReactions().then(setReactions).catch(() => {});
+      loadHotTakes().then(setHotTakes).catch(() => {});
     }, 30000);
     return () => clearInterval(iv);
   }, []);
@@ -576,13 +860,26 @@ export default function WorldCupPool() {
     setFetchStatus("loading"); setFetchError("");
     try {
       const r = await fetchLiveResults();
+      // Detect newly settled props → trigger confetti if current player won
+      if (prevPropResults && currentPlayer && !isAdmin) {
+        const pred = predictions[currentPlayer.id] || {};
+        (r.propResults || []).forEach((result, i) => {
+          if (result !== null && result !== undefined && (prevPropResults[i] === null || prevPropResults[i] === undefined)) {
+            if (pred.propPicks?.[i] === result) {
+              setConfettiProp(i);
+              setShowConfetti(true);
+            }
+          }
+        });
+      }
+      setPrevPropResults(r.propResults || []);
       setLiveResults(r); setLastFetched(new Date()); setFetchStatus("done");
       if (isPhase2Open()) {
         const p2 = await fetchLivePhase2();
         if (p2) setLivePhase2(p2);
       }
     } catch (e) { setFetchError(e.message); setFetchStatus("error"); }
-  }, []);
+  }, [prevPropResults, currentPlayer, predictions, isAdmin]);
 
   useEffect(() => { refreshScores(); }, []);
 
@@ -656,6 +953,39 @@ export default function WorldCupPool() {
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
 
+  async function handleReaction(msgId, emoji) {
+    if (!currentPlayer || isAdmin) return;
+    await toggleReaction(msgId, emoji, currentPlayer.name);
+    const updated = await loadReactions();
+    setReactions(updated);
+  }
+
+  async function handleHotTakeVote(ownerId, vote) {
+    if (!currentPlayer || isAdmin) return;
+    await voteHotTake(ownerId, currentPlayer.name, vote);
+    const updated = await loadHotTakes();
+    setHotTakes(updated);
+  }
+
+  async function submitMyHotTake() {
+    if (!currentPlayer || myHotTakePropIdx === null) return;
+    const pick = propPicks[myHotTakePropIdx];
+    if (pick === null || pick === undefined) return;
+    await submitHotTake(currentPlayer.id, currentPlayer.name, myHotTakePropIdx, pick);
+    const updated = await loadHotTakes();
+    setHotTakes(updated);
+    setMyHotTakePropIdx(null);
+  }
+
+  async function pinAnnouncement() {
+    const text = adminPinMsg.trim();
+    if (!text) return;
+    await postMessage("admin", text, true, true);
+    setAdminPinMsg("");
+    const msgs = await loadMessages();
+    setMessages(msgs);
+  }
+
   const groupsDone = Object.keys(groupRankings).length;
   const propsDone  = propPicks.filter(p => p !== null).length;
 
@@ -669,11 +999,15 @@ export default function WorldCupPool() {
   const propWon    = propSettled && propPicks[selPropIdx] === propActual;
   const propLost   = propSettled && propPicks[selPropIdx] !== null && !propWon;
 
+  const REACTION_EMOJIS = ["👍","😂","🔥","😬","❤️"];
+  const pinnedMessages = messages.filter(m => m.pinned);
+  const chatMessages   = messages.filter(m => !m.pinned);
+
   async function sendMessage() {
     const text = newMessage.trim();
     if (!text || !currentPlayer) return;
     setPostingMsg(true);
-    await postMessage(currentPlayer.name, text, isAdmin);
+    await postMessage(currentPlayer.name, text, isAdmin, false);
     setNewMessage("");
     const msgs = await loadMessages();
     setMessages(msgs);
@@ -746,45 +1080,94 @@ export default function WorldCupPool() {
     </div>
   );
 
+  function unlockSite() {
+    if (sitePassword === SITE_PASSWORD) {
+      try { localStorage.setItem("wc2026_site", "yes"); } catch {}
+      setSiteUnlocked(true);
+    } else {
+      setSiteError("Wrong password");
+    }
+  }
+
   if (!siteUnlocked) return (
     <div style={{ ...S.page, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
       <div style={{ textAlign:"center", maxWidth:320, padding:24 }}>
         <div style={{ fontSize:48, marginBottom:12 }}>⚽</div>
         <div style={{ fontSize:20, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>World Cup 2026 Pool</div>
         <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:24 }}>Enter the pool password to continue</div>
-        <input
-          type="password"
-          value={sitePassword}
+        <input type="password" value={sitePassword}
           onChange={e => { setSitePassword(e.target.value); setSiteError(""); }}
-          onKeyDown={e => {
-            if (e.key === "Enter") {
-              if (sitePassword === SITE_PASSWORD) {
-                try { localStorage.setItem("wc2026_site", "yes"); } catch {}
-                setSiteUnlocked(true);
-              } else {
-                setSiteError("Wrong password");
-              }
-            }
-          }}
+          onKeyDown={e => e.key==="Enter" && unlockSite()}
           placeholder="Pool password…"
           style={{ ...S.input, width:"100%", marginBottom:10, textAlign:"center", fontSize:16 }}
           autoFocus
         />
         {siteError && <div style={{ color:"#ff8080", fontSize:12, marginBottom:10 }}>{siteError}</div>}
-        <button onClick={() => {
-          if (sitePassword === SITE_PASSWORD) {
-            try { localStorage.setItem("wc2026_site", "yes"); } catch {}
-            setSiteUnlocked(true);
-          } else {
-            setSiteError("Wrong password");
-          }
-        }} style={{ ...S.btn, width:"100%", fontSize:15, padding:"10px" }}>Enter Pool</button>
+        <button onClick={unlockSite} style={{ ...S.btn, width:"100%", fontSize:15, padding:"10px" }}>Enter Pool</button>
+      </div>
+    </div>
+  );
+
+  // After site unlock, if not logged in, show auth screen
+  if (!currentPlayer) return (
+    <div style={{ ...S.page, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
+      <div style={{ maxWidth:360, width:"100%", padding:24 }}>
+        <div style={{ textAlign:"center", marginBottom:24 }}>
+          <div style={{ fontSize:44, marginBottom:8 }}>⚽</div>
+          <div style={{ fontSize:20, color:"#f0d060", fontWeight:"bold" }}>World Cup 2026 Pool</div>
+          <div style={{ fontSize:12, color:"#9ab8a0", marginTop:4 }}>June 11–July 19 · {players.length} player{players.length!==1?"s":""} joined</div>
+        </div>
+
+        {/* Login */}
+        <div style={S.card}>
+          <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1 }}>LOG IN</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <input value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="Your name…" style={{ ...S.input, width:"100%" }} />
+            <input value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && loginPlayer()}
+              type="password" placeholder="Password…" style={{ ...S.input, width:"100%" }} />
+            <button onClick={loginPlayer} style={{ ...S.btn, width:"100%" }}>Log In</button>
+          </div>
+          {loginError && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>{loginError}</div>}
+        </div>
+
+        {/* Register */}
+        <div style={S.card}>
+          <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1 }}>NEW? JOIN THE POOL</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Choose a name…" style={{ ...S.input, width:"100%" }} />
+            <input value={newPassword} onChange={e => setNewPassword(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && register()}
+              type="password" placeholder="Choose a password…" style={{ ...S.input, width:"100%" }} />
+            <button onClick={register} style={{ ...S.btn, width:"100%" }}>Join Pool</button>
+          </div>
+          {players.find(p => p.name===newName.trim()) && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>Name already taken</div>}
+          {newName.trim() && !newPassword.trim() && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>Password required</div>}
+        </div>
       </div>
     </div>
   );
 
   return (
     <div style={S.page}>
+      {/* Confetti */}
+      {showConfetti && (
+        <div>
+          <Confetti onDone={() => setShowConfetti(false)} />
+          <div style={{ position:"fixed", top:"38%", left:"50%", transform:"translate(-50%,-50%)", zIndex:10000, textAlign:"center", pointerEvents:"none" }}>
+            <div style={{ fontSize:48, marginBottom:8 }}>🎉</div>
+            <div style={{ background:"rgba(200,168,75,0.96)", borderRadius:12, padding:"12px 24px", color:"#0a1628", fontWeight:"bold", fontSize:16, boxShadow:"0 4px 30px rgba(200,168,75,0.5)" }}>
+              {confettiProp !== null ? `+${DAILY_PROPS[confettiProp].pts} pts — ${DAILY_PROPS[confettiProp].label}!` : "You got it!"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* H2H Modal */}
+      {h2hPlayerA && h2hPlayerB && (
+        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
+      )}
+
       {/* Header */}
       <div style={S.gold}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
@@ -814,6 +1197,17 @@ export default function WorldCupPool() {
             onClick={refreshScores} disabled={fetchStatus==="loading"}>
             {fetchStatus==="loading" ? "⏳" : "🔄"} Live
           </button>
+          {currentPlayer ? (
+            <button style={{ ...S.navBtn(false), background:"rgba(200,60,60,0.3)", color:"#ff9090" }}
+              onClick={() => { setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }}>
+              Logout
+            </button>
+          ) : (
+            <button style={{ ...S.navBtn(false), background:"rgba(200,168,75,0.3)", color:"#0a1628" }}
+              onClick={() => { /* already on auth screen if no player */ }}>
+              Log In
+            </button>
+          )}
         </div>
       </div>
 
@@ -907,76 +1301,146 @@ export default function WorldCupPool() {
                 </div>
               </div>
             )}
+            {/* ── HOT TAKES ── */}
+            {(Object.keys(hotTakes).length > 0 || (currentPlayer && !isAdmin)) && (
+              <div style={S.card}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:10, letterSpacing:1 }}>🔥 HOT TAKES</div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10 }}>Flag your boldest prop pick — others vote 🔥 or 🥶 on whether you'll nail it.</div>
+                {Object.entries(hotTakes).map(([ownerId, ht]) => {
+                  const prop = DAILY_PROPS[ht.propIdx];
+                  if (!prop) return null;
+                  const fireVotes = Object.values(ht.votes || {}).filter(v => v === "fire").length;
+                  const coldVotes = Object.values(ht.votes || {}).filter(v => v === "cold").length;
+                  const myVote = currentPlayer && ht.votes?.[currentPlayer.name];
+                  const isOwn = currentPlayer?.id === ownerId;
+                  const settled = liveResults?.propResults?.[ht.propIdx] != null;
+                  const actual = liveResults?.propResults?.[ht.propIdx];
+                  const won = settled && ht.pick === actual;
+                  return (
+                    <div key={ownerId} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"10px 12px", marginBottom:8, border:"1px solid rgba(255,255,255,0.07)" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                        <div>
+                          <span style={{ fontSize:12, color:"#f0d060", fontWeight:"bold" }}>{ht.playerName}</span>
+                          <span style={{ fontSize:10, color:"#9ab8a0", marginLeft:6 }}>{prop.date}</span>
+                          {settled && <span style={{ fontSize:10, marginLeft:6, color: won?"#8fffb0":"#ff9090" }}>{won?"✅ Nailed it":"❌ Bombed"}</span>}
+                        </div>
+                        <span style={{ fontSize:12, fontWeight:"bold", color: ht.pick?"#8fffb0":"#ff9090" }}>{ht.pick?"YES ✅":"NO ❌"}</span>
+                      </div>
+                      <div style={{ fontSize:11, color:"#c8b8a0", marginBottom:8 }}>{prop.q}</div>
+                      {!isOwn && currentPlayer && !isAdmin ? (
+                        <div style={{ display:"flex", gap:8 }}>
+                          {[["fire","🔥"],["cold","🥶"]].map(([v,icon]) => (
+                            <button key={v} onClick={() => handleHotTakeVote(ownerId, v)} style={{ background: myVote===v?"rgba(255,140,30,0.25)":"rgba(255,255,255,0.05)", border:`1px solid ${myVote===v?"rgba(255,140,30,0.5)":"rgba(255,255,255,0.1)"}`, borderRadius:6, padding:"4px 12px", cursor:"pointer", color:"#f0e6c8", fontSize:12 }}>
+                              {icon} {v==="fire"?fireVotes:coldVotes}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize:11, color:"#9ab8a0" }}>🔥 {fireVotes} · 🥶 {coldVotes}</div>
+                      )}
+                    </div>
+                  );
+                })}
+                {currentPlayer && !isAdmin && (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>Flag your own hot take:</div>
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                      <select value={myHotTakePropIdx ?? ""} onChange={e => setMyHotTakePropIdx(e.target.value===""?null:parseInt(e.target.value))} style={{ ...S.input, fontSize:11, padding:"5px 8px", flex:1, minWidth:140 }}>
+                        <option value="">Choose a prop…</option>
+                        {DAILY_PROPS.map((p, i) => {
+                          const myPick = propPicks[i];
+                          if (myPick === null || myPick === undefined) return null;
+                          return <option key={i} value={i}>{p.date}: {myPick?"YES":"NO"} — {p.q.substring(0,35)}…</option>;
+                        })}
+                      </select>
+                      <button onClick={submitMyHotTake} disabled={myHotTakePropIdx===null} style={{ ...S.btn, fontSize:11, padding:"5px 12px", background:myHotTakePropIdx!==null?"linear-gradient(90deg,#c8a84b,#f0d060)":"#444", color:myHotTakePropIdx!==null?"#0a1628":"#888" }}>🔥 Flag it</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ── MESSAGE BOARD ── */}
             <div style={S.card}>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:10, letterSpacing:1 }}>💬 BANTER BOARD</div>
 
+              {/* Pinned announcements */}
+              {pinnedMessages.length > 0 && (
+                <div style={{ marginBottom:12 }}>
+                  {pinnedMessages.map(msg => (
+                    <div key={msg.id} style={{ background:"rgba(200,168,75,0.1)", border:"1px solid rgba(200,168,75,0.45)", borderRadius:8, padding:"8px 12px", marginBottom:6, display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                      <div>
+                        <div style={{ fontSize:10, color:"#c8a84b", marginBottom:3, fontWeight:"bold" }}>📣 ANNOUNCEMENT</div>
+                        <div style={{ fontSize:12, color:"#f0e6c8" }}>{msg.text}</div>
+                      </div>
+                      {isAdmin && <button onClick={() => removeMessage(msg.id)} style={{ background:"none", border:"none", color:"rgba(255,100,100,0.4)", cursor:"pointer", fontSize:13, flexShrink:0 }}>🗑</button>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Admin pin input */}
+              {isAdmin && (
+                <div style={{ marginBottom:12, padding:"10px 12px", background:"rgba(200,168,75,0.05)", borderRadius:8, border:"1px solid rgba(200,168,75,0.2)" }}>
+                  <div style={{ fontSize:10, color:"#c8a84b", marginBottom:6, fontWeight:"bold" }}>📣 PIN ANNOUNCEMENT</div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <input value={adminPinMsg} onChange={e => setAdminPinMsg(e.target.value)} onKeyDown={e => e.key==="Enter" && pinAnnouncement()} placeholder="Type pinned message…" style={{ ...S.input, flex:1, fontSize:12, padding:"6px 10px" }} />
+                    <button onClick={pinAnnouncement} disabled={!adminPinMsg.trim()} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>📌 Pin</button>
+                  </div>
+                </div>
+              )}
+
               {/* Messages */}
               <div style={{ maxHeight:320, overflowY:"auto", marginBottom:10 }}>
-                {messages.length === 0 && (
+                {chatMessages.length === 0 && (
                   <div style={{ color:"#9ab8a0", fontSize:12, textAlign:"center", padding:"16px 0" }}>No messages yet — be the first! 👋</div>
                 )}
-                {messages.map(msg => {
+                {chatMessages.map(msg => {
                   const isOwn = currentPlayer && msg.author === currentPlayer.name;
                   const isAdminMsg = msg.isAdmin;
                   const date = new Date(msg.timestamp);
                   const timeStr = date.toLocaleDateString("en-US", { month:"short", day:"numeric" }) + " " + date.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
+                  const msgReactions = reactions[msg.id] || {};
                   return (
-                    <div key={msg.id} style={{
-                      display:"flex", flexDirection: isOwn ? "row-reverse" : "row",
-                      gap:8, marginBottom:10, alignItems:"flex-start",
-                    }}>
-                      <div style={{
-                        width:28, height:28, borderRadius:"50%", flexShrink:0,
-                        background: isAdminMsg ? "linear-gradient(135deg,#c8a84b,#f0d060)" : "rgba(255,255,255,0.1)",
-                        display:"flex", alignItems:"center", justifyContent:"center",
-                        fontSize:12, fontWeight:"bold", color: isAdminMsg ? "#0a1628" : "#f0e6c8",
-                      }}>
-                        {msg.author[0].toUpperCase()}
-                      </div>
-                      <div style={{ maxWidth:"78%", flex:1 }}>
-                        <div style={{ fontSize:10, color:"#9ab8a0", marginBottom:2, textAlign: isOwn ? "right" : "left" }}>
-                          {isAdminMsg ? "⚙️ " : ""}{msg.author} · {timeStr}
+                    <div key={msg.id} style={{ marginBottom:12 }}>
+                      <div style={{ display:"flex", flexDirection: isOwn ? "row-reverse" : "row", gap:8, alignItems:"flex-start" }}>
+                        <div style={{ width:28, height:28, borderRadius:"50%", flexShrink:0, background: isAdminMsg ? "linear-gradient(135deg,#c8a84b,#f0d060)" : "rgba(255,255,255,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:"bold", color: isAdminMsg ? "#0a1628" : "#f0e6c8" }}>
+                          {msg.author[0].toUpperCase()}
                         </div>
-                        <div style={{
-                          background: isAdminMsg ? "rgba(200,168,75,0.15)" : isOwn ? "rgba(100,150,255,0.12)" : "rgba(255,255,255,0.06)",
-                          border: `1px solid ${isAdminMsg ? "rgba(200,168,75,0.35)" : isOwn ? "rgba(100,150,255,0.25)" : "rgba(255,255,255,0.07)"}`,
-                          borderRadius: isOwn ? "10px 10px 2px 10px" : "10px 10px 10px 2px",
-                          padding:"7px 10px", fontSize:12, color:"#f0e6c8", lineHeight:1.5,
-                          wordBreak:"break-word",
-                        }}>
-                          {msg.text}
+                        <div style={{ maxWidth:"78%", flex:1 }}>
+                          <div style={{ fontSize:10, color:"#9ab8a0", marginBottom:2, textAlign: isOwn ? "right" : "left" }}>
+                            {isAdminMsg ? "⚙️ " : ""}{msg.author} · {timeStr}
+                          </div>
+                          <div style={{ background: isAdminMsg ? "rgba(200,168,75,0.15)" : isOwn ? "rgba(100,150,255,0.12)" : "rgba(255,255,255,0.06)", border: `1px solid ${isAdminMsg ? "rgba(200,168,75,0.35)" : isOwn ? "rgba(100,150,255,0.25)" : "rgba(255,255,255,0.07)"}`, borderRadius: isOwn ? "10px 10px 2px 10px" : "10px 10px 10px 2px", padding:"7px 10px", fontSize:12, color:"#f0e6c8", lineHeight:1.5, wordBreak:"break-word" }}>
+                            {msg.text}
+                          </div>
                         </div>
+                        {isAdmin && <button onClick={() => removeMessage(msg.id)} style={{ background:"none", border:"none", color:"rgba(255,100,100,0.35)", cursor:"pointer", fontSize:13, padding:"2px", alignSelf:"center", flexShrink:0 }}>🗑</button>}
                       </div>
-                      {isAdmin && (
-                        <button onClick={() => removeMessage(msg.id)} style={{
-                          background:"none", border:"none", color:"rgba(255,100,100,0.35)",
-                          cursor:"pointer", fontSize:13, padding:"2px", alignSelf:"center", flexShrink:0,
-                        }}>🗑</button>
-                      )}
+                      {/* Reactions */}
+                      <div style={{ display:"flex", gap:4, marginTop:5, paddingLeft: isOwn?0:36, paddingRight: isOwn?36:0, justifyContent: isOwn?"flex-end":"flex-start", flexWrap:"wrap" }}>
+                        {REACTION_EMOJIS.map(emoji => {
+                          const emojiKey = encodeURIComponent(emoji);
+                          const count = Object.keys(msgReactions[emojiKey] || {}).length;
+                          const iReacted = currentPlayer && msgReactions[emojiKey]?.[currentPlayer.name];
+                          return (
+                            <button key={emoji} onClick={() => handleReaction(msg.id, emoji)} style={{ background: iReacted?"rgba(200,168,75,0.22)":"rgba(255,255,255,0.05)", border:`1px solid ${iReacted?"rgba(200,168,75,0.5)":"rgba(255,255,255,0.08)"}`, borderRadius:12, padding:"2px 7px", cursor: currentPlayer&&!isAdmin?"pointer":"default", fontSize:12, color:"#f0e6c8", display:"flex", alignItems:"center", gap:3 }}>
+                              {emoji}{count>0&&<span style={{ fontSize:10, color:"#9ab8a0" }}>{count}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Compose — only if logged in */}
+              {/* Compose */}
               {currentPlayer ? (
                 <div>
                   <div style={{ display:"flex", gap:8 }}>
-                    <input
-                      value={newMessage}
-                      onChange={e => setNewMessage(e.target.value)}
-                      onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMessage()}
-                      placeholder={isAdmin ? "Post an announcement…" : "Say something…"}
-                      style={{ ...S.input, flex:1, fontSize:12, padding:"6px 10px" }}
-                      maxLength={500}
-                    />
-                    <button onClick={sendMessage} disabled={postingMsg || !newMessage.trim()} style={{
-                      ...S.btn,
-                      background: postingMsg || !newMessage.trim() ? "#444" : "linear-gradient(90deg,#c8a84b,#f0d060)",
-                      color: postingMsg || !newMessage.trim() ? "#888" : "#0a1628",
-                      fontSize:12, padding:"6px 12px",
-                    }}>
+                    <input value={newMessage} onChange={e => setNewMessage(e.target.value)} onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMessage()} placeholder={isAdmin ? "Post a message…" : "Say something…"} style={{ ...S.input, flex:1, fontSize:12, padding:"6px 10px" }} maxLength={500} />
+                    <button onClick={sendMessage} disabled={postingMsg || !newMessage.trim()} style={{ ...S.btn, background: postingMsg||!newMessage.trim() ? "#444" : "linear-gradient(90deg,#c8a84b,#f0d060)", color: postingMsg||!newMessage.trim() ? "#888" : "#0a1628", fontSize:12, padding:"6px 12px" }}>
                       {postingMsg ? "…" : "Send"}
                     </button>
                   </div>
@@ -1000,7 +1464,6 @@ export default function WorldCupPool() {
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setScreen("home")} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Home</button>
-                <button onClick={() => { setCurrentPlayer(null); setIsAdmin(false); setScreen("home"); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>Logout</button>
                 <button onClick={savePreds} disabled={saving} style={{ ...S.btn, background:saved?"#2a6040":saving?"#555":"linear-gradient(90deg,#c8a84b,#f0d060)", color:saved?"#8fffb0":"#0a1628" }}>
                   {saving ? "Saving…" : saved ? "✓ Saved!" : "Save"}
                 </button>
@@ -1507,17 +1970,24 @@ export default function WorldCupPool() {
               </button>
             </div>
 
+            {/* Sub-tabs */}
+            <div style={{ display:"flex", gap:4, marginBottom:14 }}>
+              {[["standings","🏅 Standings"],["chart","📈 Chart"],["h2h","⚔️ H2H"]].map(([t,l]) => (
+                <button key={t} style={S.tab(lbTab===t)} onClick={() => setLbTab(t)}>{l}</button>
+              ))}
+            </div>
+
             {liveResults && (
-              <div style={{ ...S.card, fontSize:12, color:"#9ab8a0" }}>
+              <div style={{ ...S.card, fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
                 <span style={{ color:"#f0d060" }}>📡</span> {liveResults.matchday||"Group Stage"} · {Object.values(liveResults.groupRankings||{}).filter(Boolean).length}/12 groups final · {(liveResults.propResults||[]).filter(v=>v!==null).length}/17 props settled
               </div>
             )}
 
-            {/* Pot summary + rows wrapped in single IIFE for shared scope */}
-            {(() => {
+            {/* STANDINGS */}
+            {lbTab==="standings" && (() => {
               const { pot1, pot2, paidCount } = calcPot(players, paid, settings);
-              const prizes1 = calcPrizes(leaderboard, paid, pot1);
-              const prizes2 = calcPrizes(leaderboard, paid, pot2);
+              const prizes1 = calcPrizes(leaderboard, paid, pot1, settings.fee1||0);
+              const prizes2 = calcPrizes(leaderboard, paid, pot2, settings.fee2||0);
               return (
                 <div>
                   <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
@@ -1526,14 +1996,14 @@ export default function WorldCupPool() {
                       <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
                         <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 1 — GROUP STAGE</div>
                         <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot1}</div>
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round(pot1*0.6)} · 🥈 ${Math.round(pot1*0.3)} · 🥉 ${Math.round(pot1*0.1)}</div>}
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place refunded</div>}
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round((pot1-(settings.fee1||0))*0.6)} · 🥈 ${Math.round((pot1-(settings.fee1||0))*0.3)} · 🥉 ${Math.round((pot1-(settings.fee1||0))*0.1)}</div>}
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place gets ${settings.fee1||0} back · distributable: ${pot1-(settings.fee1||0)}</div>}
                       </div>
                       <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
                         <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 2 — KNOCKOUTS</div>
                         <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot2}</div>
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round(pot2*0.6)} · 🥈 ${Math.round(pot2*0.3)} · 🥉 ${Math.round(pot2*0.1)}</div>}
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place refunded</div>}
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round((pot2-(settings.fee2||0))*0.6)} · 🥈 ${Math.round((pot2-(settings.fee2||0))*0.3)} · 🥉 ${Math.round((pot2-(settings.fee2||0))*0.1)}</div>}
+                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place gets ${settings.fee2||0} back · distributable: ${pot2-(settings.fee2||0)}</div>}
                       </div>
                     </div>
                   </div>
@@ -1553,7 +2023,7 @@ export default function WorldCupPool() {
                       {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
                       {prizes1[p.id] && prizes1[p.id] !== "refund" && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P1 💰${prizes1[p.id]}</span>}
                       {prizes2[p.id] && prizes2[p.id] !== "refund" && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P2 💰${prizes2[p.id]}</span>}
-                      {(prizes1[p.id] === "refund" || prizes2[p.id] === "refund") && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
+                      {prizes1[p.id] > 0 && typeof prizes1[p.id] === "number" && prizes1[p.id] === (settings.fee1||0) && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ P1 ${prizes1[p.id]}</span>}{prizes2[p.id] > 0 && typeof prizes2[p.id] === "number" && prizes2[p.id] === (settings.fee2||0) && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ P2 ${prizes2[p.id]}</span>}
                     </div>
                     <div style={{ fontSize:10, color:"#9ab8a0" }}>
                       {pred ? `${grpDone}/12 groups · ${prpDone}/17 props${isPhase2Open() ? ` · ${Object.keys(pred.phase2Picks||{}).length}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket` : ""}` : "No predictions yet"}
@@ -1572,6 +2042,64 @@ export default function WorldCupPool() {
                 </div>
               );
             })()}
+
+            {/* POINTS CHART */}
+            {lbTab==="chart" && (
+              <div style={S.card}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 POINTS OVER TIME</div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>Cumulative points per player as daily props settle throughout the tournament.</div>
+                <SparklineChart players={players} predictions={predictions} liveResults={liveResults} />
+                <div style={{ marginTop:16, borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:12 }}>
+                  {leaderboard.map((p, i) => (
+                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"5px 0" }}>
+                      <div style={{ width:10, height:10, borderRadius:"50%", background: PLAYER_COLORS[players.findIndex(pl=>pl.id===p.id) % PLAYER_COLORS.length], flexShrink:0 }} />
+                      <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {p.name}</div>
+                      <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060" }}>{p.pts} pts</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* HEAD-TO-HEAD */}
+            {lbTab==="h2h" && (
+              <div style={S.card}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>⚔️ HEAD-TO-HEAD</div>
+                <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:14 }}>Pick two players to compare their picks prop-by-prop and group-by-group.</div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+                  <div>
+                    <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>PLAYER A</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {players.map(p => (
+                        <button key={p.id} onClick={() => setH2hPlayerA(h2hPlayerA?.id===p.id?null:p)} style={{ padding:"7px 10px", borderRadius:6, border:"1px solid", textAlign:"left", cursor:"pointer", borderColor:h2hPlayerA?.id===p.id?"#f0d060":"rgba(255,255,255,0.1)", background:h2hPlayerA?.id===p.id?"rgba(200,168,75,0.2)":"rgba(255,255,255,0.04)", color:h2hPlayerA?.id===p.id?"#f0d060":"#c8b8a0", fontSize:12 }}>
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:10, color:"#60c0ff", fontWeight:"bold", marginBottom:6 }}>PLAYER B</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {players.map(p => (
+                        <button key={p.id} onClick={() => setH2hPlayerB(h2hPlayerB?.id===p.id?null:p)} style={{ padding:"7px 10px", borderRadius:6, border:"1px solid", textAlign:"left", cursor:"pointer", borderColor:h2hPlayerB?.id===p.id?"#60c0ff":"rgba(255,255,255,0.1)", background:h2hPlayerB?.id===p.id?"rgba(96,192,255,0.2)":"rgba(255,255,255,0.04)", color:h2hPlayerB?.id===p.id?"#60c0ff":"#c8b8a0", fontSize:12 }}>
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {h2hPlayerA && h2hPlayerB ? (
+                  <button style={{ ...S.btn, width:"100%" }} onClick={() => {}}>
+                    ⚔️ {h2hPlayerA.name} vs {h2hPlayerB.name} — tap to compare
+                  </button>
+                ) : (
+                  <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center" }}>
+                    {!h2hPlayerA&&!h2hPlayerB?"Select both players above":!h2hPlayerA?"Select Player A":"Select Player B"}
+                  </div>
+                )}
+                <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10, textAlign:"center" }}>The comparison panel opens as a full overlay once both are selected.</div>
+              </div>
+            )}
           </div>
         )}
 
