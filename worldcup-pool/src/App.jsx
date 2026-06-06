@@ -169,7 +169,7 @@ const DAILY_PROPS = [
   { date:"Jun 14", label:"Day 4 – Prop A", q:"Will Germany win by 3+ goals vs Curacao?",                                    ptsYes:6, ptsNo:4, yes:"Germany run riot",                         no:"Curacao keep it respectable" },
   { date:"Jun 14", label:"Day 4 – Prop B", q:"Will Netherlands vs Japan end in a draw?",                                    ptsYes:8, ptsNo:2, yes:"Stalemate in the group",                   no:"One side comes out on top" },
   // Jun 15
-  { date:"Jun 15", label:"Day 5 – Prop A", q:"Will France score before the 21st minute vs Senegal?",                        ptsYes:6, ptsNo:4, yes:"Les Bleus strike early",                   no:"Senegal keep it scoreless past 20'" },
+  { date:"Jun 15", label:"Day 5 – Prop A", q:"Will Spain keep a clean sheet vs Cape Verde?",                                  ptsYes:4, ptsNo:6, yes:"Spain shut out Cape Verde",               no:"Cape Verde get on the scoresheet" },
   { date:"Jun 15", label:"Day 5 – Prop B", q:"Will Saudi Arabia beat Uruguay?",                                             ptsYes:9, ptsNo:1, yes:"Saudi Arabia shock result!",              no:"Uruguay win or draw" },
   // Jun 16
   { date:"Jun 16", label:"Day 6 – Prop A", q:"Will Argentina keep a clean sheet vs Algeria?",                               ptsYes:5, ptsNo:5, yes:"Argentina lock it down",                  no:"Algeria get on the board" },
@@ -179,16 +179,16 @@ const DAILY_PROPS = [
   { date:"Jun 17", label:"Day 7 – Prop B", q:"Will England vs Croatia produce fewer than 2 total goals?",                  ptsYes:7, ptsNo:3, yes:"Tight affair — 0 or 1 total goals",        no:"2 or more goals in the match" },
   // Jun 18
   { date:"Jun 18", label:"Day 8 – Prop A", q:"Will Mexico beat South Korea?",                                               ptsYes:4, ptsNo:6, yes:"Mexico take the win",                     no:"South Korea win or draw" },
-  { date:"Jun 18", label:"Day 8 – Prop B", q:"Will Brazil beat Haiti by 4+ goals?",                                        ptsYes:7, ptsNo:3, yes:"Brazil demolish Haiti",                   no:"Haiti keep it under 4" },
+  { date:"Jun 18", label:"Day 8 – Prop B", q:"Will Canada beat Qatar?",                                                      ptsYes:3, ptsNo:7, yes:"Canada take all 3 points vs Qatar",       no:"Qatar win or draw" },
   // Jun 19
-  { date:"Jun 19", label:"Day 9 – Prop A", q:"Will the USA beat Turkey?",                                                  ptsYes:5, ptsNo:5, yes:"USA take all 3",                           no:"Turkey win or draw" },
-  { date:"Jun 19", label:"Day 9 – Prop B", q:"Will Turkey score vs the USA?",                                              ptsYes:4, ptsNo:6, yes:"Turkey get on the board",                 no:"USA keep a clean sheet" },
+  { date:"Jun 19", label:"Day 9 – Prop A", q:"Will the USA beat Australia?",                                                ptsYes:5, ptsNo:5, yes:"USA take all 3 points",                   no:"Australia win or draw" },
+  { date:"Jun 19", label:"Day 9 – Prop B", q:"Will Scotland vs Morocco produce 2+ total goals?",                           ptsYes:5, ptsNo:5, yes:"Goals flow in Foxborough",                no:"Tight, low-scoring affair" },
   // Jun 20
   { date:"Jun 20", label:"Day 10 – Prop A", q:"Will a goal be scored after the 80th minute in any Day 10 match?",          ptsYes:3, ptsNo:7, yes:"Late drama somewhere!",                   no:"All goals before the 80th minute" },
-  { date:"Jun 20", label:"Day 10 – Prop B", q:"Will Ecuador get a result (win or draw) vs Germany?",                       ptsYes:7, ptsNo:3, yes:"Ecuador hold their own",                  no:"Germany win" },
+  { date:"Jun 20", label:"Day 10 – Prop B", q:"Will Ecuador beat Curaçao?",                                                ptsYes:3, ptsNo:7, yes:"Ecuador take the win",                    no:"Curaçao hold on for a result" },
   // Jun 21
   { date:"Jun 21", label:"Day 11 – Prop A", q:"Will Spain score 2+ goals vs Saudi Arabia?",                                ptsYes:3, ptsNo:7, yes:"Spain put two or more past Saudi Arabia", no:"Saudi Arabia hold Spain to under 2" },
-  { date:"Jun 21", label:"Day 11 – Prop B", q:"Will Belgium beat Egypt?",                                                  ptsYes:3, ptsNo:7, yes:"Belgium take the win",                    no:"Egypt win or draw" },
+  { date:"Jun 21", label:"Day 11 – Prop B", q:"Will Belgium beat Iran?",                                                   ptsYes:3, ptsNo:7, yes:"Belgium take the win",                    no:"Iran win or draw" },
   // Jun 22
   { date:"Jun 22", label:"Day 12 – Prop A", q:"Will Argentina beat Austria without conceding?",                            ptsYes:6, ptsNo:4, yes:"Argentina clean sheet win",               no:"Austria score or Argentina don't win" },
   { date:"Jun 22", label:"Day 12 – Prop B", q:"Will France vs Iraq produce 4+ total goals?",                               ptsYes:4, ptsNo:6, yes:"4 or more goals — entertaining stuff",  no:"Under 4 goals" },
@@ -197,7 +197,7 @@ const DAILY_PROPS = [
   { date:"Jun 23", label:"Day 13 – Prop B", q:"Will England vs Ghana see both teams receive a yellow card?",               ptsYes:3, ptsNo:7, yes:"Both sides in the book",                 no:"At least one side stays card-free" },
   // Jun 24
   { date:"Jun 24", label:"Day 14 – Prop A", q:"Will Neymar register a goal or assist in Brazil's final group match vs Scotland?",   ptsYes:5, ptsNo:5, yes:"Neymar directly involved",     no:"Neymar blanks" },
-  { date:"Jun 24", label:"Day 14 – Prop B", q:"Will Alphonso Davies register a goal or assist for Canada vs Bosnia & Herzegovina?", ptsYes:6, ptsNo:4, yes:"Davies makes his mark",         no:"Davies blanks" },
+  { date:"Jun 24", label:"Day 14 – Prop B", q:"Will Alphonso Davies register a goal or assist for Canada vs Switzerland?",  ptsYes:6, ptsNo:4, yes:"Davies makes his mark",                   no:"Davies blanks" },
   // Jun 25
   { date:"Jun 25", label:"Day 15 – Prop A", q:"Will Christian Pulisic register a goal or assist for the USA vs Turkey?",           ptsYes:5, ptsNo:5, yes:"Pulisic delivers",               no:"Pulisic blanks" },
   { date:"Jun 25", label:"Day 15 – Prop B", q:"Will Germany vs Ecuador produce 4+ total goals?",                                   ptsYes:6, ptsNo:4, yes:"High-scoring clash",              no:"Under 4 total goals" },
