@@ -151,50 +151,104 @@ const tf = t => {
   return <img src={`https://flagcdn.com/24x18/${code}.png`} alt={t} style={{ width:24, height:18, objectFit:"cover", borderRadius:2, verticalAlign:"middle" }} />;
 };
 
-// ── DAILY PROPS (Jun 11–27) ───────────────────────────────────────────────────
+// ── DAILY PROPS (Jun 11–27, 2 per day = 34 total) ────────────────────────────
+// ptsYes = points if you picked YES and YES wins
+// ptsNo  = points if you picked NO  and NO  wins
+// Every prop sums to 10 pts across the two sides
 const DAILY_PROPS = [
-  { date:"Jun 11", label:"Opening Day",  q:"Will Mexico score in the tournament opener vs South Africa?",                    pts:3, yes:"Sí! Mexico score",         no:"Goalless opener" },
-  { date:"Jun 12", label:"Day 2",        q:"Will the USA win their first match vs Paraguay?",                                pts:5, yes:"USA win",                   no:"Draw or Paraguay win" },
-  { date:"Jun 13", label:"Day 3",        q:"Will Brazil beat Morocco on Day 3?",                                            pts:3, yes:"Brazil win",                no:"Draw or upset" },
-  { date:"Jun 14", label:"Day 4",        q:"Will Netherlands beat Japan on Day 4?",                                         pts:3, yes:"Netherlands win",           no:"Draw or Japan upset" },
-  { date:"Jun 15", label:"Day 5",        q:"Will Spain win their Group H opener?",                                         pts:3, yes:"Spain win",                 no:"Draw or loss" },
-  { date:"Jun 16", label:"Day 6",        q:"Will Argentina win their opener vs Algeria?",                                   pts:3, yes:"Argentina win",            no:"Draw or upset" },
-  { date:"Jun 17", label:"Day 7",        q:"Will Portugal score 3+ goals vs DR Congo?",                                    pts:5, yes:"Portugal put on a show",   no:"Under 3 goals" },
-  { date:"Jun 18", label:"Day 8",        q:"Will there be a red card on Day 8?",                                           pts:5, yes:"Someone sees red",         no:"All 11 stay on" },
-  { date:"Jun 19", label:"Day 9",        q:"Will the USA beat Australia in their second group game?",                       pts:5, yes:"USA win again",            no:"Draw or Australia win" },
-  { date:"Jun 20", label:"Day 10",       q:"Will there be a penalty scored on Day 10?",                                    pts:3, yes:"Spot kick converted",      no:"No penalties" },
-  { date:"Jun 21", label:"Day 11",       q:"Will an African team win on Day 11?",                                          pts:5, yes:"African glory",            no:"No African wins" },
-  { date:"Jun 22", label:"Day 12",       q:"Will Argentina top Group J after Matchday 2?",                                 pts:5, yes:"Messi's men lead",         no:"Someone else tops" },
-  { date:"Jun 23", label:"Day 13",       q:"Will any team be mathematically eliminated on Day 13?",                       pts:5, yes:"Someone goes home early",  no:"Still all to play for" },
-  { date:"Jun 24", label:"Day 14",       q:"Will England win their final group game vs Panama?",                           pts:3, yes:"Three Lions win",          no:"Draw or loss" },
-  { date:"Jun 25", label:"Day 15",       q:"Will there be a last-minute winner (85'+ goal) on Day 15?",                   pts:8, yes:"Late drama!",              no:"No late deciders" },
-  { date:"Jun 26", label:"Day 16",       q:"Will France top Group I with a perfect record going into the final day?",     pts:8, yes:"Perfect France",          no:"France have dropped points" },
-  { date:"Jun 27", label:"Final Day",    q:"Will a higher-ranked team lose on the final group stage day?",                pts:8, yes:"Shock result!",            no:"Favourites all win" },
+  // Jun 11
+  { date:"Jun 11", label:"Day 1 – Prop A", q:"Will Mexico keep a clean sheet vs South Africa?",                              ptsYes:6, ptsNo:4, yes:"Clean sheet! Mexico don't concede",      no:"South Africa get on the scoresheet" },
+  { date:"Jun 11", label:"Day 1 – Prop B", q:"Will South Korea vs Czechia produce 3+ total goals?",                          ptsYes:5, ptsNo:5, yes:"Goal fest — 3 or more!",                  no:"Low-scoring affair" },
+  // Jun 12
+  { date:"Jun 12", label:"Day 2 – Prop A", q:"Will the USA score in the first half vs Paraguay?",                            ptsYes:4, ptsNo:6, yes:"USA on the board before half",             no:"USA scoreless at the break" },
+  { date:"Jun 12", label:"Day 2 – Prop B", q:"Will Canada win their opening match vs Bosnia & Herzegovina?",                 ptsYes:4, ptsNo:6, yes:"Canada take all 3 points",               no:"Draw or Bosnia win" },
+  // Jun 13
+  { date:"Jun 13", label:"Day 3 – Prop A", q:"Will Brazil score 3+ goals vs Morocco?",                                       ptsYes:6, ptsNo:4, yes:"Brazil put on a show",                    no:"Morocco keep it tight" },
+  { date:"Jun 13", label:"Day 3 – Prop B", q:"Will there be a red card in any Day 3 match?",                                 ptsYes:7, ptsNo:3, yes:"Someone sees red",                        no:"All 11 stay on" },
+  // Jun 14
+  { date:"Jun 14", label:"Day 4 – Prop A", q:"Will Germany win by 3+ goals vs Curacao?",                                    ptsYes:6, ptsNo:4, yes:"Germany run riot",                         no:"Curacao keep it respectable" },
+  { date:"Jun 14", label:"Day 4 – Prop B", q:"Will Netherlands vs Japan end in a draw?",                                    ptsYes:8, ptsNo:2, yes:"Stalemate in the group",                   no:"One side comes out on top" },
+  // Jun 15
+  { date:"Jun 15", label:"Day 5 – Prop A", q:"Will France score before the 21st minute vs Senegal?",                        ptsYes:6, ptsNo:4, yes:"Les Bleus strike early",                   no:"Senegal keep it scoreless past 20'" },
+  { date:"Jun 15", label:"Day 5 – Prop B", q:"Will Saudi Arabia beat Uruguay?",                                             ptsYes:9, ptsNo:1, yes:"Saudi Arabia shock result!",              no:"Uruguay win or draw" },
+  // Jun 16
+  { date:"Jun 16", label:"Day 6 – Prop A", q:"Will Argentina keep a clean sheet vs Algeria?",                               ptsYes:5, ptsNo:5, yes:"Argentina lock it down",                  no:"Algeria get on the board" },
+  { date:"Jun 16", label:"Day 6 – Prop B", q:"Will a penalty be awarded in Argentina/Algeria or Austria/Jordan?",           ptsYes:6, ptsNo:4, yes:"Spot kick awarded in at least one game", no:"No penalties in either match" },
+  // Jun 17
+  { date:"Jun 17", label:"Day 7 – Prop A", q:"Will Cristiano Ronaldo score vs DR Congo?",                                   ptsYes:4, ptsNo:6, yes:"CR7 on the scoresheet",                   no:"Ronaldo blanks" },
+  { date:"Jun 17", label:"Day 7 – Prop B", q:"Will England vs Croatia produce fewer than 2 total goals?",                  ptsYes:7, ptsNo:3, yes:"Tight affair — 0 or 1 total goals",        no:"2 or more goals in the match" },
+  // Jun 18
+  { date:"Jun 18", label:"Day 8 – Prop A", q:"Will Mexico beat South Korea?",                                               ptsYes:4, ptsNo:6, yes:"Mexico take the win",                     no:"South Korea win or draw" },
+  { date:"Jun 18", label:"Day 8 – Prop B", q:"Will Brazil beat Haiti by 4+ goals?",                                        ptsYes:7, ptsNo:3, yes:"Brazil demolish Haiti",                   no:"Haiti keep it under 4" },
+  // Jun 19
+  { date:"Jun 19", label:"Day 9 – Prop A", q:"Will the USA beat Turkey?",                                                  ptsYes:5, ptsNo:5, yes:"USA take all 3",                           no:"Turkey win or draw" },
+  { date:"Jun 19", label:"Day 9 – Prop B", q:"Will Turkey score vs the USA?",                                              ptsYes:4, ptsNo:6, yes:"Turkey get on the board",                 no:"USA keep a clean sheet" },
+  // Jun 20
+  { date:"Jun 20", label:"Day 10 – Prop A", q:"Will a goal be scored after the 80th minute in any Day 10 match?",          ptsYes:3, ptsNo:7, yes:"Late drama somewhere!",                   no:"All goals before the 80th minute" },
+  { date:"Jun 20", label:"Day 10 – Prop B", q:"Will Ecuador get a result (win or draw) vs Germany?",                       ptsYes:7, ptsNo:3, yes:"Ecuador hold their own",                  no:"Germany win" },
+  // Jun 21
+  { date:"Jun 21", label:"Day 11 – Prop A", q:"Will Spain score 2+ goals vs Saudi Arabia?",                                ptsYes:3, ptsNo:7, yes:"Spain put two or more past Saudi Arabia", no:"Saudi Arabia hold Spain to under 2" },
+  { date:"Jun 21", label:"Day 11 – Prop B", q:"Will Belgium beat Egypt?",                                                  ptsYes:3, ptsNo:7, yes:"Belgium take the win",                    no:"Egypt win or draw" },
+  // Jun 22
+  { date:"Jun 22", label:"Day 12 – Prop A", q:"Will Argentina beat Austria without conceding?",                            ptsYes:6, ptsNo:4, yes:"Argentina clean sheet win",               no:"Austria score or Argentina don't win" },
+  { date:"Jun 22", label:"Day 12 – Prop B", q:"Will France vs Iraq produce 4+ total goals?",                               ptsYes:4, ptsNo:6, yes:"4 or more goals — entertaining stuff",  no:"Under 4 goals" },
+  // Jun 23
+  { date:"Jun 23", label:"Day 13 – Prop A", q:"Will Portugal beat Uzbekistan by 2+ goals?",                               ptsYes:3, ptsNo:7, yes:"Portugal comfortable win",               no:"Uzbekistan keep it within 1" },
+  { date:"Jun 23", label:"Day 13 – Prop B", q:"Will England vs Ghana see both teams receive a yellow card?",               ptsYes:3, ptsNo:7, yes:"Both sides in the book",                 no:"At least one side stays card-free" },
+  // Jun 24
+  { date:"Jun 24", label:"Day 14 – Prop A", q:"Will Neymar register a goal or assist in Brazil's final group match vs Scotland?",   ptsYes:5, ptsNo:5, yes:"Neymar directly involved",     no:"Neymar blanks" },
+  { date:"Jun 24", label:"Day 14 – Prop B", q:"Will Alphonso Davies register a goal or assist for Canada vs Bosnia & Herzegovina?", ptsYes:6, ptsNo:4, yes:"Davies makes his mark",         no:"Davies blanks" },
+  // Jun 25
+  { date:"Jun 25", label:"Day 15 – Prop A", q:"Will Christian Pulisic register a goal or assist for the USA vs Turkey?",           ptsYes:5, ptsNo:5, yes:"Pulisic delivers",               no:"Pulisic blanks" },
+  { date:"Jun 25", label:"Day 15 – Prop B", q:"Will Germany vs Ecuador produce 4+ total goals?",                                   ptsYes:6, ptsNo:4, yes:"High-scoring clash",              no:"Under 4 total goals" },
+  // Jun 26
+  { date:"Jun 26", label:"Day 16 – Prop A", q:"Will Erling Haaland score vs France?",                                     ptsYes:7, ptsNo:3, yes:"Haaland on the scoresheet",              no:"Haaland blanks" },
+  { date:"Jun 26", label:"Day 16 – Prop B", q:"Will there be a last-minute goal (85'+) on Day 16?",                       ptsYes:3, ptsNo:7, yes:"Late drama on Day 16!",                  no:"No goals after the 85th minute" },
+  // Jun 27
+  { date:"Jun 27", label:"Final Day – Prop A", q:"Will Jude Bellingham register a goal or assist for England vs Panama?", ptsYes:4, ptsNo:6, yes:"Bellingham delivers on the final day",  no:"Bellingham blanks" },
+  { date:"Jun 27", label:"Final Day – Prop B", q:"Will Lionel Messi score in Argentina's final group match vs Jordan?",   ptsYes:4, ptsNo:6, yes:"Messi on the scoresheet",               no:"Messi blanks" },
 ];
 
 // ── LOCK TIMES (ET) ──────────────────────────────────────────────────────────
 // Group rankings lock at first kickoff Jun 11 3pm ET
 const GROUP_RANKINGS_LOCK = new Date("2026-06-11T19:00:00Z"); // 3pm ET = 19:00 UTC
 
-// Each prop locks at first kickoff of that day (ET → UTC)
+// Each pair of props per day locks at first kickoff of that day (2 entries per day)
 const PROP_LOCKS = [
-  new Date("2026-06-11T19:00:00Z"), // Jun 11 3pm ET
-  new Date("2026-06-12T19:00:00Z"), // Jun 12 3pm ET
-  new Date("2026-06-13T19:00:00Z"), // Jun 13 3pm ET
-  new Date("2026-06-14T17:00:00Z"), // Jun 14 1pm ET
-  new Date("2026-06-15T16:00:00Z"), // Jun 15 noon ET
-  new Date("2026-06-16T19:00:00Z"), // Jun 16 3pm ET
-  new Date("2026-06-17T17:00:00Z"), // Jun 17 1pm ET
-  new Date("2026-06-18T16:00:00Z"), // Jun 18 noon ET
-  new Date("2026-06-19T19:00:00Z"), // Jun 19 3pm ET
-  new Date("2026-06-20T17:00:00Z"), // Jun 20 1pm ET
-  new Date("2026-06-21T19:00:00Z"), // Jun 21 3pm ET
-  new Date("2026-06-22T17:00:00Z"), // Jun 22 1pm ET
-  new Date("2026-06-23T17:00:00Z"), // Jun 23 1pm ET
-  new Date("2026-06-25T01:00:00Z"), // Jun 24 9pm ET
-  new Date("2026-06-25T23:00:00Z"), // Jun 25 7pm ET
-  new Date("2026-06-26T19:00:00Z"), // Jun 26 3pm ET
-  new Date("2026-06-27T21:00:00Z"), // Jun 27 5pm ET
+  new Date("2026-06-11T19:00:00Z"), // Jun 11 Prop A — 3pm ET
+  new Date("2026-06-11T19:00:00Z"), // Jun 11 Prop B
+  new Date("2026-06-12T19:00:00Z"), // Jun 12 Prop A — 3pm ET
+  new Date("2026-06-12T19:00:00Z"), // Jun 12 Prop B
+  new Date("2026-06-13T19:00:00Z"), // Jun 13 Prop A — 3pm ET
+  new Date("2026-06-13T19:00:00Z"), // Jun 13 Prop B
+  new Date("2026-06-14T17:00:00Z"), // Jun 14 Prop A — 1pm ET
+  new Date("2026-06-14T17:00:00Z"), // Jun 14 Prop B
+  new Date("2026-06-15T16:00:00Z"), // Jun 15 Prop A — noon ET
+  new Date("2026-06-15T16:00:00Z"), // Jun 15 Prop B
+  new Date("2026-06-16T19:00:00Z"), // Jun 16 Prop A — 3pm ET
+  new Date("2026-06-16T19:00:00Z"), // Jun 16 Prop B
+  new Date("2026-06-17T17:00:00Z"), // Jun 17 Prop A — 1pm ET
+  new Date("2026-06-17T17:00:00Z"), // Jun 17 Prop B
+  new Date("2026-06-18T16:00:00Z"), // Jun 18 Prop A — noon ET
+  new Date("2026-06-18T16:00:00Z"), // Jun 18 Prop B
+  new Date("2026-06-19T19:00:00Z"), // Jun 19 Prop A — 3pm ET
+  new Date("2026-06-19T19:00:00Z"), // Jun 19 Prop B
+  new Date("2026-06-20T17:00:00Z"), // Jun 20 Prop A — 1pm ET
+  new Date("2026-06-20T17:00:00Z"), // Jun 20 Prop B
+  new Date("2026-06-21T19:00:00Z"), // Jun 21 Prop A — 3pm ET
+  new Date("2026-06-21T19:00:00Z"), // Jun 21 Prop B
+  new Date("2026-06-22T17:00:00Z"), // Jun 22 Prop A — 1pm ET
+  new Date("2026-06-22T17:00:00Z"), // Jun 22 Prop B
+  new Date("2026-06-23T17:00:00Z"), // Jun 23 Prop A — 1pm ET
+  new Date("2026-06-23T17:00:00Z"), // Jun 23 Prop B
+  new Date("2026-06-25T01:00:00Z"), // Jun 24 Prop A — 9pm ET
+  new Date("2026-06-25T01:00:00Z"), // Jun 24 Prop B
+  new Date("2026-06-25T23:00:00Z"), // Jun 25 Prop A — 7pm ET
+  new Date("2026-06-25T23:00:00Z"), // Jun 25 Prop B
+  new Date("2026-06-26T19:00:00Z"), // Jun 26 Prop A — 3pm ET
+  new Date("2026-06-26T19:00:00Z"), // Jun 26 Prop B
+  new Date("2026-06-27T21:00:00Z"), // Jun 27 Prop A — 5pm ET
+  new Date("2026-06-27T21:00:00Z"), // Jun 27 Prop B
 ];
 
 function isGroupRankingsLocked() { return new Date() >= GROUP_RANKINGS_LOCK; }
@@ -286,8 +340,8 @@ function calcGroupRankingPoints(userRanking, actualRanking) {
   userRanking.forEach((team, idx) => {
     const actualIdx = actualRanking.indexOf(team);
     if (actualIdx === -1) return;
-    if (actualIdx === idx) pts += 3;
-    else if (Math.floor(idx / 2) === Math.floor(actualIdx / 2)) pts += 1;
+    if (actualIdx === idx) pts += 6;
+    else if (Math.floor(idx / 2) === Math.floor(actualIdx / 2)) pts += 2;
   });
   return pts;
 }
@@ -302,13 +356,13 @@ function calcPoints(pred, live) {
   (pred.propPicks || []).forEach((pick, i) => {
     const actual = live.propResults?.[i];
     if (actual === null || actual === undefined) return;
-    if (pick === actual) pts += DAILY_PROPS[i].pts;
+    if (pick === actual) pts += actual ? DAILY_PROPS[i].ptsYes : DAILY_PROPS[i].ptsNo;
   });
   return pts;
 }
 
-const MAX_RANKING_PTS = 12 * 4 * 3; // 144
-const MAX_PROP_PTS = DAILY_PROPS.reduce((s, p) => s + p.pts, 0);
+const MAX_RANKING_PTS = 12 * 4 * 6; // 288 (doubled: 6 pts exact)
+const MAX_PROP_PTS = DAILY_PROPS.reduce((s, p) => s + Math.max(p.ptsYes, p.ptsNo), 0);
 const MAX_PTS = MAX_RANKING_PTS + MAX_PROP_PTS;
 
 // Points progression per settled prop — used for sparkline chart
@@ -325,7 +379,7 @@ function calcPointsTimeline(pred, live) {
   propResults.forEach((result, i) => {
     if (result === null || result === undefined) return;
     const pick = pred.propPicks?.[i];
-    if (pick === result) running += DAILY_PROPS[i].pts;
+    if (pick === result) running += result ? DAILY_PROPS[i].ptsYes : DAILY_PROPS[i].ptsNo;
     points.push({ label: DAILY_PROPS[i].date, pts: running, propIdx: i });
   });
   return points;
@@ -384,12 +438,12 @@ Return ONLY valid JSON, no markdown, no explanation:
     "B": null, "C": null, "D": null, "E": null, "F": null,
     "G": null, "H": null, "I": null, "J": null, "K": null, "L": null
   },
-  "propResults": [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],
+  "propResults": [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],
   "matchday": "e.g. Group Stage Day 3",
   "lastUpdated": "ISO timestamp"
 }
 
-propResults is an array of 17 values (index 0–16):
+propResults is an array of 34 values (index 0–33), 2 props per day:
 ${propList}
 
 Team names must exactly match:
@@ -414,7 +468,7 @@ Return ONLY the JSON.`;
   // If no JSON yet (tournament hasn't started), return empty results
   if (s === -1) return {
     groupRankings: { A:null,B:null,C:null,D:null,E:null,F:null,G:null,H:null,I:null,J:null,K:null,L:null },
-    propResults: Array(17).fill(null),
+    propResults: Array(34).fill(null),
     matchday: "Tournament starts June 11",
     lastUpdated: new Date().toISOString(),
   };
@@ -909,7 +963,7 @@ export default function WorldCupPool() {
   const [selGroup, setSelGroup]           = useState("A");
   const [selPropIdx, setSelPropIdx]       = useState(0);
   const [groupRankings, setGroupRankings] = useState({});
-  const [propPicks, setPropPicks]         = useState(Array(17).fill(null));
+  const [propPicks, setPropPicks]         = useState(Array(34).fill(null));
   const [saved, setSaved]                 = useState(false);
   const [saving, setSaving]               = useState(false);
   const [viewingPlayer, setViewingPlayer] = useState(null);
@@ -945,6 +999,7 @@ export default function WorldCupPool() {
   const [prevPropResults, setPrevPropResults] = useState(null);
   const [ticker, setTicker]                   = useState(null);
   const [tickerLoading, setTickerLoading]     = useState(false);
+  const [showHowItWorks, setShowHowItWorks]   = useState(false);
 
   // Load from Firebase on mount
   useEffect(() => {
@@ -975,7 +1030,7 @@ export default function WorldCupPool() {
               if (player) {
                 const e = data.predictions[player.id] || {};
                 setGroupRankings(sanitizeGroupRankings(e.groupRankings));
-                setPropPicks(e.propPicks || Array(17).fill(null));
+                setPropPicks(e.propPicks || Array(34).fill(null));
                 setPhase2Picks(e.phase2Picks || {});
                 setTbP1(e.tbP1 !== undefined ? String(e.tbP1) : "");
                 setTbP2(e.tbP2 !== undefined ? String(e.tbP2) : "");
@@ -1063,7 +1118,7 @@ export default function WorldCupPool() {
     setIsAdmin(false);
     try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     setNewName(""); setNewPassword("");
-    setGroupRankings({}); setPropPicks(Array(17).fill(null)); setPhase2Picks({}); setTbP1(""); setTbP2("");
+    setGroupRankings({}); setPropPicks(Array(34).fill(null)); setPhase2Picks({}); setTbP1(""); setTbP2("");
     setScreen("predict");
   }
 
@@ -1089,7 +1144,7 @@ export default function WorldCupPool() {
     try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     const e = predictions[player.id] || {};
     setGroupRankings(sanitizeGroupRankings(e.groupRankings));
-    setPropPicks(e.propPicks || Array(17).fill(null));
+    setPropPicks(e.propPicks || Array(34).fill(null));
     setPhase2Picks(e.phase2Picks || {});
     setTbP1(e.tbP1 !== undefined ? String(e.tbP1) : "");
     setTbP2(e.tbP2 !== undefined ? String(e.tbP2) : "");
@@ -1137,11 +1192,7 @@ export default function WorldCupPool() {
     .map(p => ({ ...p, pts: calcPoints(predictions[p.id], liveResults, livePhase2), hasPred: !!predictions[p.id] }))
     .sort((a, b) => b.pts - a.pts);
 
-  const prop       = DAILY_PROPS[selPropIdx];
-  const propActual = liveResults?.propResults?.[selPropIdx];
-  const propSettled = propActual !== null && propActual !== undefined;
-  const propWon    = propSettled && propPicks[selPropIdx] === propActual;
-  const propLost   = propSettled && propPicks[selPropIdx] !== null && !propWon;
+  // selPropIdx retained for potential future use
 
   const pinnedMessages = messages.filter(m => m.pinned);
   const chatMessages   = messages.filter(m => !m.pinned);
@@ -1300,7 +1351,7 @@ export default function WorldCupPool() {
           <div style={{ position:"fixed", top:"38%", left:"50%", transform:"translate(-50%,-50%)", zIndex:10000, textAlign:"center", pointerEvents:"none" }}>
             <div style={{ fontSize:48, marginBottom:8 }}>🎉</div>
             <div style={{ background:"rgba(200,168,75,0.96)", borderRadius:12, padding:"12px 24px", color:"#0a1628", fontWeight:"bold", fontSize:16, boxShadow:"0 4px 30px rgba(200,168,75,0.5)" }}>
-              {confettiProp !== null ? `+${DAILY_PROPS[confettiProp].pts} pts — ${DAILY_PROPS[confettiProp].label}!` : "You got it!"}
+              {confettiProp !== null ? `+${liveResults?.propResults?.[confettiProp] ? DAILY_PROPS[confettiProp].ptsYes : DAILY_PROPS[confettiProp].ptsNo} pts — ${DAILY_PROPS[confettiProp].label}!` : "You got it!"}
             </div>
           </div>
         </div>
@@ -1310,6 +1361,110 @@ export default function WorldCupPool() {
       {h2hPlayerA && h2hPlayerB && (
         <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
       )}
+
+      {/* How It Works Modal */}
+      {showHowItWorks && (() => {
+        const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
+        const entryFee = settings.entryFee || 25;
+        const pcts1 = settings.payouts1 || [60,25,10,5,0];
+        const pcts2 = settings.payouts2 || [60,25,10,5,0];
+        const dist1 = Math.max(0, pot1 - entryFee);
+        const dist2 = Math.max(0, pot2 - entryFee);
+        return (
+          <div style={{ position:"fixed", inset:0, zIndex:9000, background:"rgba(0,0,0,0.82)", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 14px", overflowY:"auto" }}>
+            <div style={{ background:"linear-gradient(135deg,#0a1628,#0d2040)", border:"1px solid rgba(200,168,75,0.4)", borderRadius:14, maxWidth:600, width:"100%", padding:24, position:"relative" }}>
+              <button onClick={() => setShowHowItWorks(false)} style={{ position:"absolute", top:14, right:16, background:"none", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:22, lineHeight:1 }}>✕</button>
+
+              <div style={{ fontSize:22, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>⚽ How the Pool Works</div>
+              <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:20 }}>Everything you need to know to crush your mates</div>
+
+              {/* Pot */}
+              <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,60,20,0.15)", marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", letterSpacing:1, marginBottom:10 }}>💰 THE PRIZE POOL</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>
+                  Everyone chips in <strong style={{ color:"#f0d060" }}>${entryFee}</strong>. After the commissioner's cut, the pot splits into <strong>two independent competitions</strong>: Phase 1 (group stage) and Phase 2 (knockouts). Win one, both, or neither.
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  {[[pot1,"Phase 1",dist1,pcts1],[pot2,"Phase 2",dist2,pcts2]].map(([pot,label,dist,pcts]) => (
+                    <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                      <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>🏅 {label} · ${pot}</div>
+                      <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>Last place gets ${entryFee} back</div>
+                      {["🥇","🥈","🥉","4th","5th"].map((m,i) => pcts[i]>0 ? (
+                        <div key={i} style={{ fontSize:10, color:"#c8b8a0", display:"flex", justifyContent:"space-between" }}>
+                          <span>{m}</span><span style={{ color:"#f0d060" }}>${Math.round(dist*pcts[i]/100)}</span>
+                        </div>
+                      ) : null)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Group stage scoring */}
+              <div style={{ ...S.card, marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏅 PHASE 1 — GROUP STAGE SCORING</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Predict the final standings of all 12 groups (A–L). Drag teams into your predicted order.</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {[["🥇 Exact position","+6 pts","Nailed it — right team, right spot"],["✅ Correct half","+2 pts","Got them in the right half — top 2 or bottom 2"],["❌ Wrong half","0 pts","Nice try though"]].map(([l,pts,desc]) => (
+                    <div key={l} style={{ display:"flex", gap:10, alignItems:"baseline", fontSize:12 }}>
+                      <span style={{ minWidth:120, color:"#f0e6c8" }}>{l}</span>
+                      <span style={{ color:"#f0d060", fontWeight:"bold", minWidth:50 }}>{pts}</span>
+                      <span style={{ color:"#9ab8a0", fontSize:11 }}>{desc}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginTop:8 }}>Max {MAX_RANKING_PTS} pts across all 12 groups.</div>
+              </div>
+
+              {/* Props scoring */}
+              <div style={{ ...S.card, marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 PHASE 1 — DAILY PROPS SCORING</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>34 props total, 2 per day from Jun 11–27. Each prop is a YES or NO question.</div>
+                <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:10, marginBottom:8 }}>
+                  <div style={{ fontSize:12, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>Weighted odds</div>
+                  <div style={{ fontSize:12, color:"#f0e6c8", lineHeight:1.6 }}>Points are weighted by probability — the less likely outcome pays more. Every prop sums to 10 pts across the two sides. Pick the longshot right and you'll earn more than picking the chalk.</div>
+                </div>
+                <div style={{ fontSize:12, color:"#9ab8a0" }}>Example: YES=4pts / NO=6pts means the NO side is the underdog. If it happens and you called it, you bank 6.</div>
+              </div>
+
+              {/* Phase 2 */}
+              <div style={{ ...S.card, marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 PHASE 2 — KNOCKOUT BRACKET</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Pick the winner of every knockout match (R32 → Final). Points scale up with each round — getting the Final right is worth a lot.</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:5, fontSize:12 }}>
+                  {[["Round of 32","2 pts"],["Round of 16","4 pts"],["Quarter-Finals","8 pts"],["Semi-Finals","16 pts"],["Final","32 pts"]].map(([r,p]) => (
+                    <div key={r} style={{ display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(255,255,255,0.05)", padding:"3px 0" }}>
+                      <span style={{ color:"#c8b8a0" }}>{r}</span>
+                      <span style={{ color:"#f0d060", fontWeight:"bold" }}>{p} per correct pick</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize:11, color:"#aab0ff", marginTop:8 }}>🔜 Phase 2 props coming soon — extra picks for the knockout stage.</div>
+              </div>
+
+              {/* Tiebreakers */}
+              <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.06)", marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🔢 TIEBREAKERS</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6 }}><strong style={{ color:"#f0d060" }}>Phase 1:</strong> Total goals scored in the group stage. Closest to the actual number wins the tiebreak.</div>
+                <div style={{ fontSize:12, color:"#f0e6c8" }}><strong style={{ color:"#f0d060" }}>Phase 2:</strong> Minute of the first goal in the Final. Closest without going over (Price is Right rules).</div>
+              </div>
+
+              {/* Lock times */}
+              <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
+                {[["🏅 Group rankings + all Day 1 props","Jun 11 at 3pm ET — tournament kickoff (Mexico vs South Africa)"],["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],["🏆 Bracket picks","Jun 28 at noon ET — right after the group stage ends"]].map(([l,v]) => (
+                  <div key={l} style={{ fontSize:12, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                    <div style={{ color:"#ff9090", fontWeight:"bold", marginBottom:2 }}>{l}</div>
+                    <div style={{ color:"#9ab8a0" }}>{v}</div>
+                  </div>
+                ))}
+                <div style={{ fontSize:11, color:"#ff9090", marginTop:8 }}>⚠️ Save your picks early — anything unsaved before the deadline doesn't count!</div>
+              </div>
+
+              <button onClick={() => setShowHowItWorks(false)} style={{ ...S.btn, width:"100%", fontSize:14, padding:"10px" }}>Got it, let's go! ⚽</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Header */}
       <div style={S.gold}>
@@ -1326,6 +1481,9 @@ export default function WorldCupPool() {
               {s==="home" ? "🏠 Home" : "🏆 Board"}
             </button>
           ))}
+          <button style={{ ...S.navBtn(false), background:"rgba(100,150,255,0.25)", color:"#aab0ff" }} onClick={() => setShowHowItWorks(true)}>
+            ❓ Rules
+          </button>
           {currentPlayer && !isAdmin && (
             <button style={S.navBtn(screen==="predict")} onClick={() => setScreen("predict")}>📋 My Picks</button>
           )}
@@ -1358,7 +1516,7 @@ export default function WorldCupPool() {
       <div style={{ background:fetchStatus==="error"?"rgba(200,60,60,0.12)":"rgba(0,120,60,0.12)", padding:"5px 16px", fontSize:11, color:fetchStatus==="error"?"#ff8080":"#8fffb0", display:"flex", justifyContent:"space-between" }}>
         <span>
           {fetchStatus==="loading" && "⏳ Fetching live results…"}
-          {fetchStatus==="done" && `✅ ${liveResults?.matchday||"Group Stage"} · ${Object.values(liveResults?.groupRankings||{}).filter(Boolean).length}/12 groups final · ${(liveResults?.propResults||[]).filter(v=>v!==null).length}/17 props settled`}
+          {fetchStatus==="done" && `✅ ${liveResults?.matchday||"Group Stage"} · ${Object.values(liveResults?.groupRankings||{}).filter(Boolean).length}/12 groups final · ${(liveResults?.propResults||[]).filter(v=>v!==null).length}/34 props settled`}
           {fetchStatus==="error" && `⚠️ ${fetchError}`}
           {fetchStatus==="idle" && "Initialising…"}
         </span>
@@ -1433,8 +1591,8 @@ export default function WorldCupPool() {
             <div style={S.card}>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📊 PHASE 1 SCORING · Max {MAX_PTS} pts</div>
               {[
-                ["🏅 Group Rankings", `3 pts exact position · 1 pt correct half · max ${MAX_RANKING_PTS} pts`],
-                ["🎲 Daily Props (17)", `3–8 pts each · max ${MAX_PROP_PTS} pts`],
+                ["🏅 Group Rankings", `6 pts exact position · 2 pts correct half · max ${MAX_RANKING_PTS} pts`],
+                ["🎲 Daily Props (34)", `3–9 pts per side (YES/NO weighted) · max ~${MAX_PROP_PTS} pts`],
                 ["🏆 Phase 2", isPhase2Open() ? `Knockout bracket · max ${MAX_PHASE2_PTS} pts` : "Knockout bracket — unlocks Jun 28 after group stage"],
               ].map(([l,v]) => (
                 <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:12, gap:8 }}>
@@ -1565,7 +1723,7 @@ export default function WorldCupPool() {
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <div>
                 <div style={{ fontSize:17, color:"#f0d060" }}>📋 {currentPlayer.name}'s Picks</div>
-                <div style={{ fontSize:11, color:"#9ab8a0" }}>{groupsDone}/12 groups · {propsDone}/17 props</div>
+                <div style={{ fontSize:11, color:"#9ab8a0" }}>{groupsDone}/12 groups · {propsDone}/34 props</div>
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setScreen("home")} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Home</button>
@@ -1578,15 +1736,15 @@ export default function WorldCupPool() {
             {/* Progress */}
             <div style={{ marginBottom:14 }}>
               <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#9ab8a0", marginBottom:4 }}>
-                <span>Progress</span><span>{groupsDone + propsDone} / 29 picks</span>
+                <span>Progress</span><span>{groupsDone + propsDone} / 46 picks</span>
               </div>
               <div style={{ height:5, background:"rgba(255,255,255,0.08)", borderRadius:3, overflow:"hidden" }}>
-                <div style={{ height:"100%", width:`${((groupsDone+propsDone)/29)*100}%`, background:"linear-gradient(90deg,#c8a84b,#f0d060)", borderRadius:3, transition:"width 0.3s" }} />
+                <div style={{ height:"100%", width:`${((groupsDone+propsDone)/46)*100}%`, background:"linear-gradient(90deg,#c8a84b,#f0d060)", borderRadius:3, transition:"width 0.3s" }} />
               </div>
             </div>
 
             <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
-              {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/17)`],["tb1",`🔢 Tiebreaker${tbP1?"  ✓":""}`], ...(isPhase2Open() ? [["phase2","🏆 Knockouts"]] : [])].map(([t,l]) => (
+              {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/34)`],["tb1",`🔢 Tiebreaker${tbP1?"  ✓":""}`], ...(isPhase2Open() ? [["phase2","🏆 Knockouts"]] : [])].map(([t,l]) => (
                 <button key={t} style={S.tab(predTab===t)} onClick={() => setPredTab(t)}>{l}</button>
               ))}
             </div>
@@ -1596,7 +1754,7 @@ export default function WorldCupPool() {
               <div>
                 <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
                   Predict the final standings of each group. Drag or use ▲▼.<br/>
-                  <span style={{ color:"#f0d060" }}>+3 pts</span> exact position · <span style={{ color:"#c8a84b" }}>+1 pt</span> correct half (top 2 vs bottom 2)
+                  <span style={{ color:"#f0d060" }}>+6 pts</span> exact position · <span style={{ color:"#c8a84b" }}>+2 pts</span> correct half (top 2 vs bottom 2)
                 </div>
                 <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:14 }}>
                   {Object.keys(TEAMS_BY_GROUP).map(g => (
@@ -1628,76 +1786,86 @@ export default function WorldCupPool() {
             )}
 
             {/* DAILY PROPS */}
-            {predTab==="props" && (
+            {predTab==="props" && (() => {
+              // Group props by date for display
+              const propsByDate = [];
+              let currentDate = null;
+              DAILY_PROPS.forEach((p, i) => {
+                if (p.date !== currentDate) {
+                  currentDate = p.date;
+                  propsByDate.push({ date: p.date, props: [] });
+                }
+                propsByDate[propsByDate.length - 1].props.push({ prop: p, idx: i });
+              });
+
+              return (
               <div>
-                <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>One prop per match day — Yes or No. Auto-scored from live results.</div>
-                <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:14 }}>
-                  {DAILY_PROPS.map((p, i) => {
-                    const settled = liveResults?.propResults?.[i] !== null && liveResults?.propResults?.[i] !== undefined;
-                    const picked  = propPicks[i] !== null;
-                    const locked  = isPropLocked(i);
-                    return (
-                      <button key={i} style={{
-                        padding:"3px 7px", borderRadius:4, border:"none", fontSize:10, fontWeight:"bold", cursor:"pointer",
-                        background: selPropIdx===i ? "#c8a84b" : settled ? "rgba(100,200,100,0.2)" : locked ? "rgba(200,60,60,0.15)" : picked ? "rgba(200,168,75,0.2)" : "rgba(255,255,255,0.08)",
-                        color: selPropIdx===i ? "#0a1628" : settled ? "#8fffb0" : locked && !picked ? "#ff9090" : picked ? "#f0d060" : "#9ab8a0",
-                      }} onClick={() => setSelPropIdx(i)}>
-                        {p.date.replace("Jun ","")} {locked?"🔒":picked?"✓":""}
-                      </button>
-                    );
-                  })}
-                </div>
+                <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>Two props per match day — YES or NO. Points are weighted: the less likely outcome pays more. Both sides always sum to 10 pts.</div>
 
-                <div style={{ ...S.card, borderColor:propWon?"rgba(100,255,150,0.4)":propLost?"rgba(255,100,100,0.3)":"rgba(200,168,75,0.2)" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                    <span style={{ fontSize:11, color:"#f0d060", fontWeight:"bold" }}>{prop.date} — {prop.label}</span>
-                    <span style={{ fontSize:12, fontWeight:"bold", color:prop.pts===8?"#ff9f50":prop.pts===5?"#f0d060":"#9ab8a0" }}>
-                      +{prop.pts} pts {prop.pts===8?"🔥":prop.pts===5?"⚡":""}
-                    </span>
+                {propsByDate.map(({ date, props: dayProps }) => (
+                  <div key={date} style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, paddingBottom:4, borderBottom:"1px solid rgba(200,168,75,0.2)" }}>{date.toUpperCase()}</div>
+                    {dayProps.map(({ prop, idx }) => {
+                      const actual = liveResults?.propResults?.[idx];
+                      const settled = actual !== null && actual !== undefined;
+                      const pick = propPicks[idx];
+                      const won = settled && pick === actual;
+                      const lost = settled && pick !== null && pick !== undefined && !won;
+                      const locked = isPropLocked(idx);
+                      return (
+                        <div key={idx} style={{ ...S.card, marginBottom:10, borderColor: won?"rgba(100,255,150,0.4)":lost?"rgba(255,100,100,0.3)":"rgba(200,168,75,0.2)" }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                            <span style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", flex:1, marginRight:8 }}>{prop.label}</span>
+                            <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                              <span style={{ fontSize:10, background:"rgba(0,180,80,0.15)", color:"#8fffb0", borderRadius:4, padding:"2px 6px" }}>YES {prop.ptsYes}pts</span>
+                              <span style={{ fontSize:10, background:"rgba(180,50,50,0.15)", color:"#ff9090", borderRadius:4, padding:"2px 6px" }}>NO {prop.ptsNo}pts</span>
+                              {locked && <span style={{ fontSize:10, color:"#ff9090" }}>🔒</span>}
+                            </div>
+                          </div>
+                          <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:10, lineHeight:1.5 }}>{prop.q}</div>
+
+                          {settled && (
+                            <div style={{ fontSize:12, marginBottom:10, padding:"6px 10px", borderRadius:6, background:actual?"rgba(0,180,80,0.15)":"rgba(180,50,50,0.15)", color:actual?"#8fffb0":"#ff9090" }}>
+                              Result: {actual ? `✅ YES — ${prop.yes}` : `❌ NO — ${prop.no}`}
+                              {won ? " 🎉 You got it!" : lost ? " 😬 Unlucky" : ""}
+                            </div>
+                          )}
+
+                          {locked && !settled && (
+                            <div style={{ background:"rgba(200,60,60,0.15)", border:"1px solid rgba(200,60,60,0.3)", borderRadius:8, padding:"6px 10px", marginBottom:8, fontSize:11, color:"#ff9090" }}>
+                              🔒 Locked — picks closed before first match of the day
+                            </div>
+                          )}
+
+                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                            {[[true,"✅",prop.yes,prop.ptsYes],[false,"❌",prop.no,prop.ptsNo]].map(([val,icon,label,pts]) => (
+                              <button key={String(val)}
+                                onClick={() => {
+                                  if (isPropLocked(idx)) return;
+                                  const n=[...propPicks]; n[idx]=val; setPropPicks(n);
+                                }}
+                                style={{
+                                  padding:"12px 8px", borderRadius:10, border:"2px solid",
+                                  borderColor:propPicks[idx]===val?"#f0d060":"rgba(255,255,255,0.1)",
+                                  background:propPicks[idx]===val?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
+                                  color:propPicks[idx]===val?"#f0d060":"#c8b8a0",
+                                  cursor:isPropLocked(idx)?"default":"pointer", fontSize:12, textAlign:"center", lineHeight:1.4,
+                                  opacity:isPropLocked(idx)&&propPicks[idx]!==val?0.4:1,
+                                }}>
+                                <div style={{ fontSize:18, marginBottom:3 }}>{icon}</div>
+                                <div style={{ fontWeight:propPicks[idx]===val?"bold":"normal", marginBottom:3 }}>{label}</div>
+                                <div style={{ fontSize:10, color:propPicks[idx]===val?"#f0d060":"#9ab8a0" }}>+{pts} pts</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div style={{ fontSize:14, color:"#f0e6c8", marginBottom:14, lineHeight:1.5 }}>{prop.q}</div>
-
-                  {propSettled && (
-                    <div style={{ fontSize:12, marginBottom:12, padding:"6px 10px", borderRadius:6, background:propActual?"rgba(0,180,80,0.15)":"rgba(180,50,50,0.15)", color:propActual?"#8fffb0":"#ff9090" }}>
-                      Result: {propActual ? `✅ YES — ${prop.yes}` : `❌ NO — ${prop.no}`}
-                      {propWon?" 🎉 You got it!":propLost?" 😬 Unlucky":""}
-                    </div>
-                  )}
-
-                  {isPropLocked(selPropIdx) && !propSettled && (
-                    <div style={{ background:"rgba(200,60,60,0.15)", border:"1px solid rgba(200,60,60,0.3)", borderRadius:8, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#ff9090" }}>
-                      🔒 Locked — picks closed before first match of the day
-                    </div>
-                  )}
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                    {[[true,"✅",prop.yes],[false,"❌",prop.no]].map(([val,icon,label]) => (
-                      <button key={String(val)}
-                        onClick={() => {
-                          if (isPropLocked(selPropIdx)) return;
-                          const n=[...propPicks]; n[selPropIdx]=val; setPropPicks(n);
-                        }}
-                        style={{
-                          padding:"14px 8px", borderRadius:10, border:"2px solid",
-                          borderColor:propPicks[selPropIdx]===val?"#f0d060":"rgba(255,255,255,0.1)",
-                          background:propPicks[selPropIdx]===val?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
-                          color:propPicks[selPropIdx]===val?"#f0d060":"#c8b8a0",
-                          cursor:isPropLocked(selPropIdx)?"default":"pointer", fontSize:12, textAlign:"center", lineHeight:1.4,
-                          opacity:isPropLocked(selPropIdx)&&propPicks[selPropIdx]!==val?0.4:1,
-                        }}>
-                        <div style={{ fontSize:20, marginBottom:4 }}>{icon}</div>
-                        <div style={{ fontWeight:propPicks[selPropIdx]===val?"bold":"normal" }}>{label}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
-                  <button style={S.pill(false)} onClick={() => setSelPropIdx(i => Math.max(0,i-1))} disabled={selPropIdx===0}>← Prev</button>
-                  <span style={{ fontSize:11, color:"#9ab8a0" }}>{selPropIdx+1} / 17</span>
-                  <button style={S.pill(false)} onClick={() => setSelPropIdx(i => Math.min(16,i+1))} disabled={selPropIdx===16}>Next →</button>
-                </div>
+                ))}
               </div>
-            )}
+              );
+            })()}
 
             {/* PHASE 1 TIEBREAKER TAB */}
             {predTab==="tb1" && (
@@ -2076,7 +2244,7 @@ export default function WorldCupPool() {
 
             {liveResults && (
               <div style={{ ...S.card, fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
-                <span style={{ color:"#f0d060" }}>📡</span> {liveResults.matchday||"Group Stage"} · {Object.values(liveResults.groupRankings||{}).filter(Boolean).length}/12 groups final · {(liveResults.propResults||[]).filter(v=>v!==null).length}/17 props settled
+                <span style={{ color:"#f0d060" }}>📡</span> {liveResults.matchday||"Group Stage"} · {Object.values(liveResults.groupRankings||{}).filter(Boolean).length}/12 groups final · {(liveResults.propResults||[]).filter(v=>v!==null).length}/34 props settled
               </div>
             )}
 
@@ -2131,7 +2299,7 @@ export default function WorldCupPool() {
                             {prizes2[p.id] && prizes2[p.id] !== refund2 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P2 💰${prizes2[p.id]}</span>}
                           </div>
                           <div style={{ fontSize:10, color:"#9ab8a0" }}>
-                            {pred ? `${grpDone}/12 groups · ${prpDone}/17 props${isPhase2Open() ? ` · ${Object.keys(pred.phase2Picks||{}).length}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket` : ""}` : "No predictions yet"}
+                            {pred ? `${grpDone}/12 groups · ${prpDone}/34 props${isPhase2Open() ? ` · ${Object.keys(pred.phase2Picks||{}).length}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket` : ""}` : "No predictions yet"}
                           </div>
                         </div>
                         <div>
