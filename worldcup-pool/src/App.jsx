@@ -7,12 +7,12 @@ async function dbLoad() {
   const r = await fetch(`${DB_URL}/pool.json`);
   if (!r.ok) throw new Error(`Firebase error ${r.status}`);
   const data = await r.json();
-  if (!data) return { players: [], predictions: {}, paid: {}, settings: { fee1: 10, fee2: 10 } };
+  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] } };
   return {
     players: data.players || [],
     predictions: data.predictions || {},
     paid: data.paid || {},
-    settings: data.settings || { fee1: 10, fee2: 10 },
+    settings: data.settings || { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] },
   };
 }
 
@@ -73,29 +73,6 @@ async function toggleReaction(msgId, emoji, playerName) {
 }
 
 // ── HOT TAKES ────────────────────────────────────────────────────────────────
-async function loadHotTakes() {
-  const r = await fetch(`${DB_URL}/hottakes.json`);
-  if (!r.ok) return {};
-  const data = await r.json();
-  return data || {};
-}
-
-async function submitHotTake(playerId, playerName, propIdx, pick) {
-  await fetch(`${DB_URL}/hottakes/${playerId}.json`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ playerId, playerName, propIdx, pick, timestamp: Date.now(), votes: {} }),
-  });
-}
-
-async function voteHotTake(ownerId, voterName, vote) {
-  await fetch(`${DB_URL}/hottakes/${ownerId}/votes/${voterName}.json`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(vote),
-  });
-}
-
 // ── AUTH HELPERS ─────────────────────────────────────────────────────────────
 const ADMIN = { name: "admin", password: "admin" };
 const SITE_PASSWORD = "powerwc";
@@ -358,23 +335,40 @@ function calcPointsTimeline(pred, live) {
 const PLAYER_COLORS = ["#f0d060","#60c0ff","#80ff90","#ff8090","#c080ff","#ffb060","#60ffe0","#ff60c0","#a0c060","#60a0ff"];
 
 // ── POT CALCULATIONS ─────────────────────────────────────────────────────────
+// New model:
+//   total collected = paidCount * entryFee
+//   commissioner cut = flat $ amount off the top
+//   remainder split by phase1Split% / phase2Split%
+//   each phase: last place gets entryFee refund first, then top 5 paid by configurable %
 function calcPot(players, paid, settings) {
   const paidCount = players.filter(p => paid[p.id]).length;
-  const pot1 = paidCount * (settings.fee1 || 0);
-  const pot2 = paidCount * (settings.fee2 || 0);
-  return { pot1, pot2, total: pot1 + pot2, paidCount };
+  const total = paidCount * (settings.entryFee || 25);
+  const commCut = Math.min(settings.commCut || 20, total);
+  const remainder = total - commCut;
+  const p1Split = (settings.p1Split ?? 50) / 100;
+  const pot1 = Math.round(remainder * p1Split);
+  const pot2 = remainder - pot1;
+  return { pot1, pot2, total, commCut, remainder, paidCount };
 }
 
-function calcPrizes(rankedPlayers, paid, potAmount, entryFee) {
+// payoutPcts: array of 5 numbers (%, e.g. [60,25,10,5,0])
+// Returns { playerId: dollarAmount } for winners + last place refund
+function calcPrizes(rankedPlayers, paid, potAmount, entryFee, payoutPcts) {
   const paidPlayers = rankedPlayers.filter(p => paid[p.id]);
-  if (paidPlayers.length < 3 || potAmount === 0) return {};
+  if (paidPlayers.length < 2 || potAmount === 0) return {};
+  const pcts = payoutPcts || [60, 25, 10, 5, 0];
   const prizes = {};
+  // Last place refund
   const last = paidPlayers[paidPlayers.length - 1];
-  prizes[last.id] = entryFee; // refund = entry fee back
-  const distributable = potAmount - entryFee;
-  prizes[paidPlayers[0].id] = Math.round(distributable * 0.60);
-  prizes[paidPlayers[1].id] = Math.round(distributable * 0.30);
-  prizes[paidPlayers[2].id] = Math.round(distributable * 0.10);
+  const refund = Math.min(entryFee, potAmount);
+  prizes[last.id] = refund;
+  const distributable = potAmount - refund;
+  // Top 5 payouts
+  paidPlayers.slice(0, 5).forEach((p, i) => {
+    if (p.id === last.id) return; // last place already handled
+    const pct = (pcts[i] || 0) / 100;
+    if (pct > 0) prizes[p.id] = (prizes[p.id] || 0) + Math.round(distributable * pct);
+  });
   return prizes;
 }
 
@@ -466,6 +460,49 @@ Return ONLY the JSON.`;
   return parsed.knockoutWinners || null;
 }
 
+// ── MATCH TICKER (live + upcoming) ───────────────────────────────────────────
+async function fetchMatchTicker() {
+  const prompt = `Search the web for today's 2026 FIFA World Cup matches (group stage June 11–27 2026).
+
+Return ONLY valid JSON, no markdown:
+{
+  "live": [
+    { "home": "Team A", "away": "Team B", "homeScore": 1, "awayScore": 0, "minute": "67'", "group": "A", "status": "LIVE" }
+  ],
+  "upcoming": [
+    { "home": "Team C", "away": "Team D", "kickoff": "3:00 PM ET", "group": "B", "status": "upcoming" }
+  ],
+  "completed": [
+    { "home": "Team E", "away": "Team F", "homeScore": 2, "awayScore": 1, "group": "C", "status": "FT" }
+  ],
+  "date": "Jun 12"
+}
+
+- live: matches currently in progress right now
+- upcoming: matches scheduled for later today (not yet kicked off)
+- completed: matches finished today
+- Use exact team names from the tournament
+- If no matches today, return empty arrays and set date to today's date
+- Return ONLY the JSON.`;
+
+  const res = await fetch("/api/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 800,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
+  if (s === -1) return null;
+  return JSON.parse(cleaned.slice(s, e + 1));
+}
+
 // ── STYLES ────────────────────────────────────────────────────────────────────
 const S = {
   page: { minHeight:"100vh", background:"linear-gradient(135deg,#0a1628 0%,#0d2040 50%,#071a14 100%)", fontFamily:"'Georgia',serif", color:"#f0e6c8" },
@@ -477,6 +514,113 @@ const S = {
   navBtn: (a) => ({ background:a?"#0a1628":"rgba(10,22,40,0.3)", color:a?"#f0d060":"#0a1628", border:"none", borderRadius:4, padding:"4px 10px", fontSize:11, cursor:"pointer", fontWeight:"bold" }),
   pill: (a) => ({ padding:"3px 10px", borderRadius:4, border:"none", background:a?"#c8a84b":"rgba(255,255,255,0.08)", color:a?"#0a1628":"#9ab8a0", cursor:"pointer", fontSize:11, fontWeight:"bold" }),
 };
+
+// ── MATCH TICKER / COUNTDOWN ─────────────────────────────────────────────────
+const TOURNAMENT_START = new Date("2026-06-11T19:00:00Z"); // Jun 11 3pm ET
+
+function CountdownTimer() {
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setTick(Date.now()), 50);
+    return () => clearInterval(iv);
+  }, []);
+
+  const diff = Math.max(0, TOURNAMENT_START.getTime() - tick);
+  const days  = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const mins  = Math.floor((diff % 3600000) / 60000);
+  const secs  = Math.floor((diff % 60000) / 1000);
+  const ms    = Math.floor((diff % 1000) / 10); // 2-digit centiseconds
+
+  const unit = (val, label) => (
+    <div style={{ textAlign:"center", minWidth:52 }}>
+      <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
+        {String(val).padStart(label === "MS" ? 2 : 2, "0")}
+      </div>
+      <div style={{ fontSize:9, color:"#9ab8a0", letterSpacing:1, marginTop:3 }}>{label}</div>
+    </div>
+  );
+  const sep = <div style={{ fontSize:22, color:"rgba(200,168,75,0.4)", paddingBottom:14, alignSelf:"flex-end" }}>:</div>;
+
+  return (
+    <div style={{ ...S.card, background:"linear-gradient(135deg,rgba(10,22,40,0.9),rgba(13,32,64,0.9))", borderColor:"rgba(200,168,75,0.5)", textAlign:"center" }}>
+      <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:2, marginBottom:12 }}>⏳ TOURNAMENT KICKOFF</div>
+      <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:14 }}>Mexico 🇲🇽 vs 🇿🇦 South Africa · June 11 · 3:00 PM ET</div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+        {unit(days, "DAYS")}
+        {sep}
+        {unit(hours, "HRS")}
+        {sep}
+        {unit(mins, "MIN")}
+        {sep}
+        {unit(secs, "SEC")}
+        {sep}
+        {unit(ms, "MS")}
+      </div>
+    </div>
+  );
+}
+
+function MatchCard({ match, isLive }) {
+  const homeCode = COUNTRY_CODE[match.home];
+  const awayCode = COUNTRY_CODE[match.away];
+  const flag = (code) => code
+    ? <img src={`https://flagcdn.com/24x18/${code}.png`} alt="" style={{ width:22, height:16, objectFit:"cover", borderRadius:2, verticalAlign:"middle" }} />
+    : <span>🏳️</span>;
+
+  const statusColor = isLive ? "#8fffb0" : match.status === "FT" ? "#9ab8a0" : "#f0d060";
+  const statusBg    = isLive ? "rgba(0,200,80,0.15)" : match.status === "FT" ? "rgba(255,255,255,0.05)" : "rgba(200,168,75,0.1)";
+
+  return (
+    <div style={{ background:statusBg, border:`1px solid ${isLive?"rgba(0,200,80,0.35)":match.status==="FT"?"rgba(255,255,255,0.08)":"rgba(200,168,75,0.25)"}`, borderRadius:8, padding:"10px 14px", marginBottom:6 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+        <span style={{ fontSize:10, color:statusColor, fontWeight:"bold" }}>
+          {isLive ? `🔴 LIVE ${match.minute||""}` : match.status === "FT" ? "✅ FT" : `🕐 ${match.kickoff||""}`}
+        </span>
+        <span style={{ fontSize:10, color:"#9ab8a0" }}>Group {match.group}</span>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:8 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          {flag(homeCode)}
+          <span style={{ fontSize:13, color:"#f0e6c8", fontWeight: isLive||match.status==="FT"?"bold":"normal" }}>{match.home}</span>
+        </div>
+        <div style={{ fontSize:isLive||match.status==="FT"?20:14, fontWeight:"bold", color:"#f0d060", textAlign:"center", minWidth:48 }}>
+          {isLive || match.status === "FT"
+            ? `${match.homeScore ?? 0}–${match.awayScore ?? 0}`
+            : "vs"}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"flex-end" }}>
+          <span style={{ fontSize:13, color:"#f0e6c8", fontWeight: isLive||match.status==="FT"?"bold":"normal" }}>{match.away}</span>
+          {flag(awayCode)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatchTicker({ ticker, loading, onRefresh }) {
+  if (!ticker) return null;
+  const { live = [], upcoming = [], completed = [], date } = ticker;
+  const hasLive = live.length > 0;
+  const hasAny  = live.length + upcoming.length + completed.length > 0;
+
+  return (
+    <div style={{ ...S.card, borderColor: hasLive ? "rgba(0,200,80,0.4)" : "rgba(200,168,75,0.3)", background: hasLive ? "rgba(0,60,20,0.2)" : "rgba(255,255,255,0.03)" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+        <div style={{ fontSize:11, fontWeight:"bold", color: hasLive?"#8fffb0":"#f0d060", letterSpacing:1 }}>
+          {hasLive ? "🔴 LIVE NOW" : "📅 TODAY'S MATCHES"} · {date}
+        </div>
+        <button onClick={onRefresh} disabled={loading} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:5, padding:"3px 8px", color:"#9ab8a0", cursor:loading?"default":"pointer", fontSize:10 }}>
+          {loading ? "⏳" : "🔄"}
+        </button>
+      </div>
+      {!hasAny && <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center", padding:"8px 0" }}>No matches today · check back soon</div>}
+      {live.map((m, i)      => <MatchCard key={`live-${i}`}      match={m} isLive={true} />)}
+      {upcoming.map((m, i)  => <MatchCard key={`upcoming-${i}`}  match={m} isLive={false} />)}
+      {completed.map((m, i) => <MatchCard key={`completed-${i}`} match={m} isLive={false} />)}
+    </div>
+  );
+}
 
 // ── CONFETTI ──────────────────────────────────────────────────────────────────
 function Confetti({ onDone }) {
@@ -773,9 +917,12 @@ export default function WorldCupPool() {
   const [newMessage, setNewMessage]       = useState("");
   const [postingMsg, setPostingMsg]       = useState(false);
   const [paid, setPaid]                   = useState({});
-  const [settings, setSettings]           = useState({ fee1: 10, fee2: 10 });
-  const [editFee1, setEditFee1]           = useState("10");
-  const [editFee2, setEditFee2]           = useState("10");
+  const [settings, setSettings]           = useState({ entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] });
+  const [editFee, setEditFee]             = useState("25");
+  const [editComm, setEditComm]           = useState("20");
+  const [editP1Split, setEditP1Split]     = useState("50");
+  const [editPayouts1, setEditPayouts1]   = useState(["60","25","10","5","0"]);
+  const [editPayouts2, setEditPayouts2]   = useState(["60","25","10","5","0"]);
 
   const [liveResults, setLiveResults]     = useState(null);
   const [livePhase2, setLivePhase2]       = useState(null);
@@ -789,7 +936,6 @@ export default function WorldCupPool() {
 
   // ── NEW FEATURE STATE ─────────────────────────────────────────────────────
   const [reactions, setReactions]         = useState({});
-  const [hotTakes, setHotTakes]           = useState({});
   const [showConfetti, setShowConfetti]   = useState(false);
   const [confettiProp, setConfettiProp]   = useState(null);
   const [h2hPlayerA, setH2hPlayerA]       = useState(null);
@@ -797,7 +943,8 @@ export default function WorldCupPool() {
   const [lbTab, setLbTab]                 = useState("standings");
   const [adminPinMsg, setAdminPinMsg]     = useState("");
   const [prevPropResults, setPrevPropResults] = useState(null);
-  const [myHotTakePropIdx, setMyHotTakePropIdx] = useState(null);
+  const [ticker, setTicker]                   = useState(null);
+  const [tickerLoading, setTickerLoading]     = useState(false);
 
   // Load from Firebase on mount
   useEffect(() => {
@@ -806,9 +953,14 @@ export default function WorldCupPool() {
         setPlayers(data.players);
         setPredictions(data.predictions);
         setPaid(data.paid || {});
-        setSettings(data.settings || { fee1: 10, fee2: 10 });
-        setEditFee1(String(data.settings?.fee1 || 10));
-        setEditFee2(String(data.settings?.fee2 || 10));
+        const def = { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] };
+        const s = data.settings || def;
+        setSettings(s);
+        setEditFee(String(s.entryFee ?? 25));
+        setEditComm(String(s.commCut ?? 20));
+        setEditP1Split(String(s.p1Split ?? 50));
+        setEditPayouts1((s.payouts1 || [60,25,10,5,0]).map(String));
+        setEditPayouts2((s.payouts2 || [60,25,10,5,0]).map(String));
         setDbLoading(false);
         // Restore session state
         try {
@@ -842,16 +994,14 @@ export default function WorldCupPool() {
   useEffect(() => {
     loadMessages().then(setMessages).catch(() => {});
     loadReactions().then(setReactions).catch(() => {});
-    loadHotTakes().then(setHotTakes).catch(() => {});
   }, []);
 
   // Poll Firebase every 30s
   useEffect(() => {
     const iv = setInterval(() => {
-      dbLoad().then(data => { setPlayers(data.players); setPredictions(data.predictions); setPaid(data.paid || {}); setSettings(data.settings || { fee1:10, fee2:10 }); }).catch(() => {});
+      dbLoad().then(data => { setPlayers(data.players); setPredictions(data.predictions); setPaid(data.paid || {}); setSettings(data.settings || { entryFee:25, commCut:20, p1Split:50, payouts1:[60,25,10,5,0], payouts2:[60,25,10,5,0] }); }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
-      loadHotTakes().then(setHotTakes).catch(() => {});
     }, 30000);
     return () => clearInterval(iv);
   }, []);
@@ -882,6 +1032,24 @@ export default function WorldCupPool() {
   }, [prevPropResults, currentPlayer, predictions, isAdmin]);
 
   useEffect(() => { refreshScores(); }, []);
+
+  const refreshTicker = useCallback(async () => {
+    if (new Date() < TOURNAMENT_START) return;
+    setTickerLoading(true);
+    try {
+      const t = await fetchMatchTicker();
+      setTicker(t);
+    } catch {}
+    setTickerLoading(false);
+  }, []);
+
+  // Load ticker on mount + poll every 2 minutes during tournament
+  useEffect(() => {
+    if (new Date() < TOURNAMENT_START) return;
+    refreshTicker();
+    const iv = setInterval(refreshTicker, 120000);
+    return () => clearInterval(iv);
+  }, []);
 
   async function register() {
     const name = newName.trim();
@@ -953,30 +1121,6 @@ export default function WorldCupPool() {
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
 
-  async function handleReaction(msgId, emoji) {
-    if (!currentPlayer || isAdmin) return;
-    await toggleReaction(msgId, emoji, currentPlayer.name);
-    const updated = await loadReactions();
-    setReactions(updated);
-  }
-
-  async function handleHotTakeVote(ownerId, vote) {
-    if (!currentPlayer || isAdmin) return;
-    await voteHotTake(ownerId, currentPlayer.name, vote);
-    const updated = await loadHotTakes();
-    setHotTakes(updated);
-  }
-
-  async function submitMyHotTake() {
-    if (!currentPlayer || myHotTakePropIdx === null) return;
-    const pick = propPicks[myHotTakePropIdx];
-    if (pick === null || pick === undefined) return;
-    await submitHotTake(currentPlayer.id, currentPlayer.name, myHotTakePropIdx, pick);
-    const updated = await loadHotTakes();
-    setHotTakes(updated);
-    setMyHotTakePropIdx(null);
-  }
-
   async function pinAnnouncement() {
     const text = adminPinMsg.trim();
     if (!text) return;
@@ -999,7 +1143,6 @@ export default function WorldCupPool() {
   const propWon    = propSettled && propPicks[selPropIdx] === propActual;
   const propLost   = propSettled && propPicks[selPropIdx] !== null && !propWon;
 
-  const REACTION_EMOJIS = ["👍","😂","🔥","😬","❤️"];
   const pinnedMessages = messages.filter(m => m.pinned);
   const chatMessages   = messages.filter(m => !m.pinned);
 
@@ -1227,11 +1370,65 @@ export default function WorldCupPool() {
         {/* ── HOME ── */}
         {screen==="home" && (
           <div>
-            <div style={{ textAlign:"center", marginBottom:22 }}>
+            <div style={{ textAlign:"center", marginBottom:16 }}>
               <div style={{ fontSize:44, marginBottom:6 }}>🏆</div>
               <h1 style={{ margin:0, fontSize:24, color:"#f0d060" }}>World Cup Pool</h1>
               <p style={{ color:"#9ab8a0", fontSize:12, margin:"4px 0 0" }}>Phase 1: Group Stage · June 11–27 · Backed by Firebase ☁️</p>
             </div>
+
+            {/* Countdown or live ticker */}
+            {new Date() < TOURNAMENT_START
+              ? <CountdownTimer />
+              : <MatchTicker ticker={ticker} loading={tickerLoading} onRefresh={refreshTicker} />
+            }
+
+            {/* 💵 Payout structure */}
+            {(() => {
+              const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
+              const entryFee = settings.entryFee || 25;
+              const pcts1 = settings.payouts1 || [60,25,10,5,0];
+              const pcts2 = settings.payouts2 || [60,25,10,5,0];
+              const refund = Math.min(entryFee, pot1);
+              const dist1 = Math.max(0, pot1 - refund);
+              const dist2 = Math.max(0, pot2 - refund);
+              const medals = ["🥇","🥈","🥉","4th","5th"];
+              return (
+                <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,60,20,0.15)" }}>
+                  <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:10, letterSpacing:1 }}>💵 PRIZE POOL</div>
+
+                  {/* Money flow */}
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:12, fontSize:12 }}>
+                    <span style={{ color:"#f0e6c8" }}>${entryFee} entry</span>
+                    <span style={{ color:"#555" }}>×</span>
+                    <span style={{ color:"#f0e6c8" }}>{paidCount} paid</span>
+                    <span style={{ color:"#555" }}>=</span>
+                    <span style={{ color:"#f0d060", fontWeight:"bold" }}>${total}</span>
+                    <span style={{ color:"#555" }}>−</span>
+                    <span style={{ color:"#ff9090" }}>${commCut} commissioner</span>
+                    <span style={{ color:"#555" }}>=</span>
+                    <span style={{ color:"#8fffb0", fontWeight:"bold" }}>${total - commCut} to players</span>
+                  </div>
+
+                  {/* Phase split */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
+                    {[[pot1,"🏅 Phase 1",dist1,pcts1],[pot2,"🏆 Phase 2",dist2,pcts2]].map(([pot,label,dist,pcts]) => (
+                      <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                        <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{label} · <span style={{ color:"#f0d060" }}>${pot}</span></div>
+                        <div style={{ fontSize:10, color:"#aab0ff", marginBottom:6 }}>↩ last place gets ${refund} back</div>
+                        {medals.map((m, i) => pcts[i] > 0 ? (
+                          <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#c8b8a0", padding:"2px 0" }}>
+                            <span>{m}</span>
+                            <span style={{ color:"#f0d060", fontWeight:"bold" }}>${Math.round(dist * pcts[i] / 100)} <span style={{ color:"#9ab8a0", fontWeight:"normal" }}>({pcts[i]}%)</span></span>
+                          </div>
+                        ) : null)}
+                      </div>
+                    ))}
+                  </div>
+
+                  {paidCount === 0 && <div style={{ fontSize:11, color:"#9ab8a0" }}>Amounts above reflect {players.length} player{players.length!==1?"s":""} — numbers update as players pay.</div>}
+                </div>
+              );
+            })()}
 
             <div style={S.card}>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📊 PHASE 1 SCORING · Max {MAX_PTS} pts</div>
@@ -1266,27 +1463,8 @@ export default function WorldCupPool() {
             </div>
 
             {/* Login */}
-            <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>LOG IN</div>
-              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-                <input value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="Your name…" style={{ ...S.input, flex:1 }} />
-                <input value={loginPassword} onChange={e => setLoginPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && loginPlayer()} type="password" placeholder="Password…" style={{ ...S.input, flex:1 }} />
-                <button onClick={loginPlayer} style={S.btn}>Login</button>
-              </div>
-              {loginError && <div style={{ color:"#e06060", fontSize:11 }}>{loginError}</div>}
-            </div>
 
             {/* Join */}
-            <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>NEW? JOIN THE POOL</div>
-              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-                <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Choose a name…" style={{ ...S.input, flex:1 }} />
-                <input value={newPassword} onChange={e => setNewPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && register()} type="password" placeholder="Choose a password…" style={{ ...S.input, flex:1 }} />
-                <button onClick={register} style={S.btn}>Join</button>
-              </div>
-              {players.find(p => p.name===newName.trim()) && <div style={{ color:"#e06060", fontSize:11 }}>Name already taken</div>}
-              {newName.trim() && !newPassword.trim() && <div style={{ color:"#e06060", fontSize:11 }}>Password required</div>}
-            </div>
 
             {/* Player list - names only, no login from here */}
             {players.length > 0 && (
@@ -1301,65 +1479,6 @@ export default function WorldCupPool() {
                 </div>
               </div>
             )}
-            {/* ── HOT TAKES ── */}
-            {(Object.keys(hotTakes).length > 0 || (currentPlayer && !isAdmin)) && (
-              <div style={S.card}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:10, letterSpacing:1 }}>🔥 HOT TAKES</div>
-                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10 }}>Flag your boldest prop pick — others vote 🔥 or 🥶 on whether you'll nail it.</div>
-                {Object.entries(hotTakes).map(([ownerId, ht]) => {
-                  const prop = DAILY_PROPS[ht.propIdx];
-                  if (!prop) return null;
-                  const fireVotes = Object.values(ht.votes || {}).filter(v => v === "fire").length;
-                  const coldVotes = Object.values(ht.votes || {}).filter(v => v === "cold").length;
-                  const myVote = currentPlayer && ht.votes?.[currentPlayer.name];
-                  const isOwn = currentPlayer?.id === ownerId;
-                  const settled = liveResults?.propResults?.[ht.propIdx] != null;
-                  const actual = liveResults?.propResults?.[ht.propIdx];
-                  const won = settled && ht.pick === actual;
-                  return (
-                    <div key={ownerId} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"10px 12px", marginBottom:8, border:"1px solid rgba(255,255,255,0.07)" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
-                        <div>
-                          <span style={{ fontSize:12, color:"#f0d060", fontWeight:"bold" }}>{ht.playerName}</span>
-                          <span style={{ fontSize:10, color:"#9ab8a0", marginLeft:6 }}>{prop.date}</span>
-                          {settled && <span style={{ fontSize:10, marginLeft:6, color: won?"#8fffb0":"#ff9090" }}>{won?"✅ Nailed it":"❌ Bombed"}</span>}
-                        </div>
-                        <span style={{ fontSize:12, fontWeight:"bold", color: ht.pick?"#8fffb0":"#ff9090" }}>{ht.pick?"YES ✅":"NO ❌"}</span>
-                      </div>
-                      <div style={{ fontSize:11, color:"#c8b8a0", marginBottom:8 }}>{prop.q}</div>
-                      {!isOwn && currentPlayer && !isAdmin ? (
-                        <div style={{ display:"flex", gap:8 }}>
-                          {[["fire","🔥"],["cold","🥶"]].map(([v,icon]) => (
-                            <button key={v} onClick={() => handleHotTakeVote(ownerId, v)} style={{ background: myVote===v?"rgba(255,140,30,0.25)":"rgba(255,255,255,0.05)", border:`1px solid ${myVote===v?"rgba(255,140,30,0.5)":"rgba(255,255,255,0.1)"}`, borderRadius:6, padding:"4px 12px", cursor:"pointer", color:"#f0e6c8", fontSize:12 }}>
-                              {icon} {v==="fire"?fireVotes:coldVotes}
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize:11, color:"#9ab8a0" }}>🔥 {fireVotes} · 🥶 {coldVotes}</div>
-                      )}
-                    </div>
-                  );
-                })}
-                {currentPlayer && !isAdmin && (
-                  <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.07)" }}>
-                    <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8 }}>Flag your own hot take:</div>
-                    <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                      <select value={myHotTakePropIdx ?? ""} onChange={e => setMyHotTakePropIdx(e.target.value===""?null:parseInt(e.target.value))} style={{ ...S.input, fontSize:11, padding:"5px 8px", flex:1, minWidth:140 }}>
-                        <option value="">Choose a prop…</option>
-                        {DAILY_PROPS.map((p, i) => {
-                          const myPick = propPicks[i];
-                          if (myPick === null || myPick === undefined) return null;
-                          return <option key={i} value={i}>{p.date}: {myPick?"YES":"NO"} — {p.q.substring(0,35)}…</option>;
-                        })}
-                      </select>
-                      <button onClick={submitMyHotTake} disabled={myHotTakePropIdx===null} style={{ ...S.btn, fontSize:11, padding:"5px 12px", background:myHotTakePropIdx!==null?"linear-gradient(90deg,#c8a84b,#f0d060)":"#444", color:myHotTakePropIdx!==null?"#0a1628":"#888" }}>🔥 Flag it</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* ── MESSAGE BOARD ── */}
             <div style={S.card}>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:10, letterSpacing:1 }}>💬 BANTER BOARD</div>
@@ -1400,7 +1519,6 @@ export default function WorldCupPool() {
                   const isAdminMsg = msg.isAdmin;
                   const date = new Date(msg.timestamp);
                   const timeStr = date.toLocaleDateString("en-US", { month:"short", day:"numeric" }) + " " + date.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
-                  const msgReactions = reactions[msg.id] || {};
                   return (
                     <div key={msg.id} style={{ marginBottom:12 }}>
                       <div style={{ display:"flex", flexDirection: isOwn ? "row-reverse" : "row", gap:8, alignItems:"flex-start" }}>
@@ -1416,19 +1534,6 @@ export default function WorldCupPool() {
                           </div>
                         </div>
                         {isAdmin && <button onClick={() => removeMessage(msg.id)} style={{ background:"none", border:"none", color:"rgba(255,100,100,0.35)", cursor:"pointer", fontSize:13, padding:"2px", alignSelf:"center", flexShrink:0 }}>🗑</button>}
-                      </div>
-                      {/* Reactions */}
-                      <div style={{ display:"flex", gap:4, marginTop:5, paddingLeft: isOwn?0:36, paddingRight: isOwn?36:0, justifyContent: isOwn?"flex-end":"flex-start", flexWrap:"wrap" }}>
-                        {REACTION_EMOJIS.map(emoji => {
-                          const emojiKey = encodeURIComponent(emoji);
-                          const count = Object.keys(msgReactions[emojiKey] || {}).length;
-                          const iReacted = currentPlayer && msgReactions[emojiKey]?.[currentPlayer.name];
-                          return (
-                            <button key={emoji} onClick={() => handleReaction(msg.id, emoji)} style={{ background: iReacted?"rgba(200,168,75,0.22)":"rgba(255,255,255,0.05)", border:`1px solid ${iReacted?"rgba(200,168,75,0.5)":"rgba(255,255,255,0.08)"}`, borderRadius:12, padding:"2px 7px", cursor: currentPlayer&&!isAdmin?"pointer":"default", fontSize:12, color:"#f0e6c8", display:"flex", alignItems:"center", gap:3 }}>
-                              {emoji}{count>0&&<span style={{ fontSize:10, color:"#9ab8a0" }}>{count}</span>}
-                            </button>
-                          );
-                        })}
                       </div>
                     </div>
                   );
@@ -1788,31 +1893,71 @@ export default function WorldCupPool() {
                 <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
               </div>
             </div>
-            {/* Entry fee settings */}
+            {/* Pool settings */}
             <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1 }}>💰 ENTRY FEES</div>
-              <div style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
+              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>💰 POOL SETTINGS</div>
+
+              {/* Entry fee + commissioner cut */}
+              <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:14 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Phase 1: $</label>
-                  <input type="number" value={editFee1} onChange={e => setEditFee1(e.target.value)}
-                    style={{ ...S.input, width:60, padding:"4px 8px", fontSize:13 }} />
+                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Entry fee $</label>
+                  <input type="number" min="0" value={editFee} onChange={e => setEditFee(e.target.value)} style={{ ...S.input, width:64, padding:"4px 8px", fontSize:13 }} />
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Phase 2: $</label>
-                  <input type="number" value={editFee2} onChange={e => setEditFee2(e.target.value)}
-                    style={{ ...S.input, width:60, padding:"4px 8px", fontSize:13 }} />
+                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Commissioner cut $</label>
+                  <input type="number" min="0" value={editComm} onChange={e => setEditComm(e.target.value)} style={{ ...S.input, width:64, padding:"4px 8px", fontSize:13 }} />
                 </div>
-                <button onClick={async () => {
-                  const s = { fee1: parseFloat(editFee1)||0, fee2: parseFloat(editFee2)||0 };
-                  setSettings(s);
-                  await dbSave(players, predictions, paid, s);
-                }} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>Save Fees</button>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Phase 1 split %</label>
+                  <input type="number" min="0" max="100" value={editP1Split} onChange={e => setEditP1Split(e.target.value)} style={{ ...S.input, width:56, padding:"4px 8px", fontSize:13 }} />
+                  <span style={{ fontSize:11, color:"#9ab8a0" }}>/ P2: {100 - (parseInt(editP1Split)||0)}%</span>
+                </div>
               </div>
+
+              {/* Payout % editors */}
+              {[["Phase 1 Payouts", editPayouts1, setEditPayouts1], ["Phase 2 Payouts", editPayouts2, setEditPayouts2]].map(([label, pcts, setPcts]) => {
+                const total = pcts.reduce((s, v) => s + (parseFloat(v)||0), 0);
+                const over = total > 100;
+                return (
+                  <div key={label} style={{ marginBottom:12 }}>
+                    <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{label} <span style={{ color: over?"#ff9090":"#9ab8a0", fontWeight:"normal" }}>({total}% of distributable{over?" — over 100%!":""})</span></div>
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                      {["🥇","🥈","🥉","4th","5th"].map((medal, i) => (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <span style={{ fontSize:12 }}>{medal}</span>
+                          <input type="number" min="0" max="100" value={pcts[i]} onChange={e => { const n=[...pcts]; n[i]=e.target.value; setPcts(n); }} style={{ ...S.input, width:52, padding:"3px 6px", fontSize:12, textAlign:"center" }} />
+                          <span style={{ fontSize:11, color:"#9ab8a0" }}>%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button onClick={async () => {
+                const s = {
+                  entryFee: parseFloat(editFee)||0,
+                  commCut: parseFloat(editComm)||0,
+                  p1Split: parseFloat(editP1Split)||50,
+                  payouts1: editPayouts1.map(v => parseFloat(v)||0),
+                  payouts2: editPayouts2.map(v => parseFloat(v)||0),
+                };
+                setSettings(s);
+                await dbSave(players, predictions, paid, s);
+              }} style={{ ...S.btn, fontSize:11, padding:"6px 16px" }}>💾 Save Settings</button>
+
+              {/* Live summary */}
               {(() => {
-                const { pot1, pot2, paidCount } = calcPot(players, paid, settings);
-                return <div style={{ fontSize:11, color:"#9ab8a0", marginTop:8 }}>
-                  {paidCount} paid · Phase 1 pot: <strong style={{ color:"#f0d060" }}>${pot1}</strong> · Phase 2 pot: <strong style={{ color:"#f0d060" }}>${pot2}</strong>
-                </div>;
+                const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
+                const entryFee = settings.entryFee || 25;
+                const refund = Math.min(entryFee, pot1);
+                return (
+                  <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10, lineHeight:1.8 }}>
+                    <div>{paidCount} paid · collected <strong style={{ color:"#f0d060" }}>${total}</strong> · commissioner <strong style={{ color:"#ff9090" }}>−${commCut}</strong> · distributable <strong style={{ color:"#8fffb0" }}>${total - commCut}</strong></div>
+                    <div>Phase 1 pot <strong style={{ color:"#f0d060" }}>${pot1}</strong> · Phase 2 pot <strong style={{ color:"#f0d060" }}>${pot2}</strong></div>
+                    {paidCount >= 2 && <div style={{ color:"#aab0ff" }}>Last place refund <strong>${entryFee}</strong> per phase</div>}
+                  </div>
+                );
               })()}
             </div>
 
@@ -1983,59 +2128,67 @@ export default function WorldCupPool() {
               </div>
             )}
 
-            {/* STANDINGS */}
             {lbTab==="standings" && (() => {
-              const { pot1, pot2, paidCount } = calcPot(players, paid, settings);
-              const prizes1 = calcPrizes(leaderboard, paid, pot1, settings.fee1||0);
-              const prizes2 = calcPrizes(leaderboard, paid, pot2, settings.fee2||0);
+              const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
+              const entryFee = settings.entryFee || 25;
+              const prizes1 = calcPrizes(leaderboard, paid, pot1, entryFee, settings.payouts1);
+              const prizes2 = calcPrizes(leaderboard, paid, pot2, entryFee, settings.payouts2);
+              const refund1 = Math.min(entryFee, pot1);
+              const refund2 = Math.min(entryFee, pot2);
+              const dist1 = pot1 - refund1;
+              const dist2 = pot2 - refund2;
+              const pcts1 = settings.payouts1 || [60,25,10,5,0];
+              const pcts2 = settings.payouts2 || [60,25,10,5,0];
               return (
                 <div>
+                  {/* Pot card */}
                   <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
-                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 THE POTS · {paidCount} paid</div>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 THE POTS · {paidCount} paid · ${total} collected · 🎩 commissioner ${commCut}</div>
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                      <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
-                        <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 1 — GROUP STAGE</div>
-                        <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot1}</div>
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round((pot1-(settings.fee1||0))*0.6)} · 🥈 ${Math.round((pot1-(settings.fee1||0))*0.3)} · 🥉 ${Math.round((pot1-(settings.fee1||0))*0.1)}</div>}
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place gets ${settings.fee1||0} back · distributable: ${pot1-(settings.fee1||0)}</div>}
-                      </div>
-                      <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
-                        <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>PHASE 2 — KNOCKOUTS</div>
-                        <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot2}</div>
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#9ab8a0" }}>🥇 ${Math.round((pot2-(settings.fee2||0))*0.6)} · 🥈 ${Math.round((pot2-(settings.fee2||0))*0.3)} · 🥉 ${Math.round((pot2-(settings.fee2||0))*0.1)}</div>}
-                        {paidCount >= 3 && <div style={{ fontSize:10, color:"#aab0ff", marginTop:2 }}>↩ last place gets ${settings.fee2||0} back · distributable: ${pot2-(settings.fee2||0)}</div>}
-                      </div>
+                      {[[pot1,"PHASE 1 — GROUP STAGE",dist1,pcts1,refund1],[pot2,"PHASE 2 — KNOCKOUTS",dist2,pcts2,refund2]].map(([pot,label,dist,pcts,refund]) => (
+                        <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                          <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>{label}</div>
+                          <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot}</div>
+                          {paidCount >= 2 && <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>↩ last ${refund} · distributable ${dist}</div>}
+                          {paidCount >= 2 && dist > 0 && (
+                            <div style={{ fontSize:10, color:"#9ab8a0" }}>
+                              {["🥇","🥈","🥉","4️⃣","5️⃣"].map((m,i) => pcts[i]>0 ? `${m} $${Math.round(dist*pcts[i]/100)}` : null).filter(Boolean).join(" · ")}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
+
                   {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet — go to Home to join!</div>}
                   {leaderboard.map((p, i) => {
-              const pred = predictions[p.id];
-              const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
-              const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
-
-              return (
-                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
-                  <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`}</div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:15, color:i===0?"#f0d060":"#f0e6c8", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                      {p.name}
-                      {paid[p.id] && <span style={{ fontSize:9, background:"rgba(100,200,100,0.2)", color:"#8fffb0", borderRadius:4, padding:"1px 5px" }}>paid {paid[p.id+"_method"]==="cash"?"💵":"💸"}</span>}
-                      {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
-                      {prizes1[p.id] && prizes1[p.id] !== "refund" && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P1 💰${prizes1[p.id]}</span>}
-                      {prizes2[p.id] && prizes2[p.id] !== "refund" && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P2 💰${prizes2[p.id]}</span>}
-                      {prizes1[p.id] > 0 && typeof prizes1[p.id] === "number" && prizes1[p.id] === (settings.fee1||0) && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ P1 ${prizes1[p.id]}</span>}{prizes2[p.id] > 0 && typeof prizes2[p.id] === "number" && prizes2[p.id] === (settings.fee2||0) && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ P2 ${prizes2[p.id]}</span>}
-                    </div>
-                    <div style={{ fontSize:10, color:"#9ab8a0" }}>
-                      {pred ? `${grpDone}/12 groups · ${prpDone}/17 props${isPhase2Open() ? ` · ${Object.keys(pred.phase2Picks||{}).length}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket` : ""}` : "No predictions yet"}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize:26, fontWeight:"bold", color:"#f0d060", textAlign:"right" }}>{p.pts}</div>
-                    <div style={{ fontSize:10, color:"#9ab8a0", textAlign:"right" }}>/ {MAX_PTS} pts</div>
-                  </div>
-                </div>
-              );
-            })}
+                    const pred = predictions[p.id];
+                    const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
+                    const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
+                    const isLastPaid = leaderboard.filter(x=>paid[x.id]).at(-1)?.id === p.id && paid[p.id];
+                    return (
+                      <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
+                        <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i===3?"4️⃣":i===4?"5️⃣":`#${i+1}`}</div>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:15, color:i===0?"#f0d060":"#f0e6c8", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                            {p.name}
+                            {paid[p.id] && <span style={{ fontSize:9, background:"rgba(100,200,100,0.2)", color:"#8fffb0", borderRadius:4, padding:"1px 5px" }}>paid {paid[p.id+"_method"]==="cash"?"💵":"💸"}</span>}
+                            {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
+                            {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
+                            {prizes1[p.id] && prizes1[p.id] !== refund1 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P1 💰${prizes1[p.id]}</span>}
+                            {prizes2[p.id] && prizes2[p.id] !== refund2 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P2 💰${prizes2[p.id]}</span>}
+                          </div>
+                          <div style={{ fontSize:10, color:"#9ab8a0" }}>
+                            {pred ? `${grpDone}/12 groups · ${prpDone}/17 props${isPhase2Open() ? ` · ${Object.keys(pred.phase2Picks||{}).length}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket` : ""}` : "No predictions yet"}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize:26, fontWeight:"bold", color:"#f0d060", textAlign:"right" }}>{p.pts}</div>
+                          <div style={{ fontSize:10, color:"#9ab8a0", textAlign:"right" }}>/ {MAX_PTS} pts</div>
+                        </div>
+                      </div>
+                    );
+                  })}
                   <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", marginTop:8 }}>
                     Leaderboard syncs every 30s. Phase 2 (knockouts) unlocks after June 27. 🔜
                   </div>
