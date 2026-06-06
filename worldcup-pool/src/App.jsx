@@ -1388,7 +1388,7 @@ export default function WorldCupPool() {
               const entryFee = settings.entryFee || 25;
               const pcts1 = settings.payouts1 || [60,25,10,5,0];
               const pcts2 = settings.payouts2 || [60,25,10,5,0];
-              const refund = Math.min(entryFee, pot1);
+              const refund = entryFee;
               const dist1 = Math.max(0, pot1 - refund);
               const dist2 = Math.max(0, pot2 - refund);
               const medals = ["🥇","🥈","🥉","4th","5th"];
@@ -1585,8 +1585,8 @@ export default function WorldCupPool() {
               </div>
             </div>
 
-            <div style={{ display:"flex", gap:4, marginBottom:14 }}>
-              {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/17)`], ...(isPhase2Open() ? [["phase2","🏆 Knockouts"]] : [])].map(([t,l]) => (
+            <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
+              {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/17)`],["tb1",`🔢 Tiebreaker${tbP1?"  ✓":""}`], ...(isPhase2Open() ? [["phase2","🏆 Knockouts"]] : [])].map(([t,l]) => (
                 <button key={t} style={S.tab(predTab===t)} onClick={() => setPredTab(t)}>{l}</button>
               ))}
             </div>
@@ -1624,59 +1624,6 @@ export default function WorldCupPool() {
                   <span style={{ fontSize:11, color:"#9ab8a0" }}>Group {selGroup} · {Object.keys(TEAMS_BY_GROUP).indexOf(selGroup)+1}/12</span>
                   <button style={S.pill(false)} onClick={() => { const ks=Object.keys(TEAMS_BY_GROUP); const i=ks.indexOf(selGroup); if(i<ks.length-1) setSelGroup(ks[i+1]); }} disabled={selGroup==="L"}>Next →</button>
                 </div>
-
-                {/* Phase 1 Tiebreaker */}
-                {selGroup === "L" && (
-                  <div style={{ ...S.card, marginTop:16, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
-                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 1 TIEBREAKER</div>
-                    <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P1.question}</div>
-                    <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, lineHeight:1.5 }}>{TIEBREAKER_P1.hint}</div>
-                    <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-                      {TIEBREAKER_P1.references.map(r => (
-                        <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"5px 10px", fontSize:11 }}>
-                          <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.goals} goals</span> <span style={{ color:"#9ab8a0" }}>({r.avg})</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <input type="number" min="50" max="300" value={tbP1}
-                        onChange={e => setTbP1(e.target.value)}
-                        placeholder="Your guess…"
-                        style={{ ...S.input, width:120, fontSize:16, textAlign:"center" }}
-                        disabled={isGroupRankingsLocked()}
-                      />
-                      <span style={{ fontSize:12, color:"#9ab8a0" }}>goals</span>
-                      {tbP1 && <span style={{ fontSize:12, color:"#f0d060" }}>✓ {tbP1} goals</span>}
-                    </div>
-                    {isGroupRankingsLocked() && <div style={{ fontSize:11, color:"#ff9090", marginTop:6 }}>🔒 Locked</div>}
-                  </div>
-                )}
-              {/* Phase 2 Tiebreaker — shown when on Final round */}
-              {phase2Tab === "final" && (
-                <div style={{ ...S.card, marginTop:8, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
-                  <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 2 TIEBREAKER</div>
-                  <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P2.question}</div>
-                  <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, lineHeight:1.5 }}>{TIEBREAKER_P2.hint}</div>
-                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-                    {TIEBREAKER_P2.references.map(r => (
-                      <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"5px 10px", fontSize:11 }}>
-                        <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.matchup}</span> <span style={{ color:"#9ab8a0" }}>· {r.minute}'</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <input type="number" min="1" max="120" value={tbP2}
-                      onChange={e => setTbP2(e.target.value)}
-                      placeholder="Your guess…"
-                      style={{ ...S.input, width:120, fontSize:16, textAlign:"center" }}
-                      disabled={isPhase2Locked()}
-                    />
-                    <span style={{ fontSize:12, color:"#9ab8a0" }}>minute</span>
-                    {tbP2 && <span style={{ fontSize:12, color:"#f0d060" }}>✓ {tbP2}'</span>}
-                  </div>
-                  {isPhase2Locked() && <div style={{ fontSize:11, color:"#ff9090", marginTop:6 }}>🔒 Locked</div>}
-                </div>
-              )}
               </div>
             )}
 
@@ -1749,32 +1696,37 @@ export default function WorldCupPool() {
                   <span style={{ fontSize:11, color:"#9ab8a0" }}>{selPropIdx+1} / 17</span>
                   <button style={S.pill(false)} onClick={() => setSelPropIdx(i => Math.min(16,i+1))} disabled={selPropIdx===16}>Next →</button>
                 </div>
-              {/* Phase 2 Tiebreaker — shown when on Final round */}
-              {phase2Tab === "final" && (
-                <div style={{ ...S.card, marginTop:8, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
-                  <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 2 TIEBREAKER</div>
-                  <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P2.question}</div>
-                  <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, lineHeight:1.5 }}>{TIEBREAKER_P2.hint}</div>
-                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-                    {TIEBREAKER_P2.references.map(r => (
-                      <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"5px 10px", fontSize:11 }}>
-                        <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.matchup}</span> <span style={{ color:"#9ab8a0" }}>· {r.minute}'</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <input type="number" min="1" max="120" value={tbP2}
-                      onChange={e => setTbP2(e.target.value)}
-                      placeholder="Your guess…"
-                      style={{ ...S.input, width:120, fontSize:16, textAlign:"center" }}
-                      disabled={isPhase2Locked()}
-                    />
-                    <span style={{ fontSize:12, color:"#9ab8a0" }}>minute</span>
-                    {tbP2 && <span style={{ fontSize:12, color:"#f0d060" }}>✓ {tbP2}'</span>}
-                  </div>
-                  {isPhase2Locked() && <div style={{ fontSize:11, color:"#ff9090", marginTop:6 }}>🔒 Locked</div>}
+              </div>
+            )}
+
+            {/* PHASE 1 TIEBREAKER TAB */}
+            {predTab==="tb1" && (
+              <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 1 TIEBREAKER</div>
+                <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>Used only to break ties in Phase 1 standings. Doesn't affect your score directly.</div>
+                <div style={{ fontSize:14, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P1.question}</div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, lineHeight:1.6 }}>{TIEBREAKER_P1.hint}</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+                  {TIEBREAKER_P1.references.map(r => (
+                    <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"6px 10px", fontSize:11 }}>
+                      <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.goals} goals</span> <span style={{ color:"#9ab8a0" }}>({r.avg})</span>
+                    </div>
+                  ))}
                 </div>
-              )}
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <input type="number" min="50" max="300" value={tbP1}
+                    onChange={e => setTbP1(e.target.value)}
+                    placeholder="Your guess…"
+                    style={{ ...S.input, width:130, fontSize:20, textAlign:"center", padding:"10px" }}
+                    disabled={isGroupRankingsLocked()}
+                  />
+                  <span style={{ fontSize:13, color:"#9ab8a0" }}>goals</span>
+                  {tbP1 && <span style={{ fontSize:13, color:"#f0d060", fontWeight:"bold" }}>✓ {tbP1} goals</span>}
+                </div>
+                {isGroupRankingsLocked()
+                  ? <div style={{ fontSize:11, color:"#ff9090", marginTop:10 }}>🔒 Locked at tournament kickoff</div>
+                  : <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10 }}>Locks Jun 11 at 3pm ET with group rankings</div>
+                }
               </div>
             )}
 
@@ -2133,10 +2085,10 @@ export default function WorldCupPool() {
               const entryFee = settings.entryFee || 25;
               const prizes1 = calcPrizes(leaderboard, paid, pot1, entryFee, settings.payouts1);
               const prizes2 = calcPrizes(leaderboard, paid, pot2, entryFee, settings.payouts2);
-              const refund1 = Math.min(entryFee, pot1);
-              const refund2 = Math.min(entryFee, pot2);
-              const dist1 = pot1 - refund1;
-              const dist2 = pot2 - refund2;
+              const refund1 = entryFee;
+              const refund2 = entryFee;
+              const dist1 = Math.max(0, pot1 - refund1);
+              const dist2 = Math.max(0, pot2 - refund2);
               const pcts1 = settings.payouts1 || [60,25,10,5,0];
               const pcts2 = settings.payouts2 || [60,25,10,5,0];
               return (
