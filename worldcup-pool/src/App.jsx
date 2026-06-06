@@ -210,32 +210,32 @@ const DAILY_PROPS = [
 ];
 
 // ── LOCK TIMES (ET) ──────────────────────────────────────────────────────────
-// Group rankings lock at first kickoff Jun 11 3pm ET
-const GROUP_RANKINGS_LOCK = new Date("2026-06-11T19:00:00Z"); // 3pm ET = 19:00 UTC
+// Group rankings lock at first kickoff Jun 11 noon PT
+const GROUP_RANKINGS_LOCK = new Date("2026-06-11T19:00:00Z"); // noon PT = 19:00 UTC
 
 // Each pair of props per day locks at first kickoff of that day (2 entries per day)
 const PROP_LOCKS = [
-  new Date("2026-06-11T19:00:00Z"), // Jun 11 Prop A — 3pm ET
+  new Date("2026-06-11T19:00:00Z"), // Jun 11 Prop A — noon PT
   new Date("2026-06-11T19:00:00Z"), // Jun 11 Prop B
-  new Date("2026-06-12T19:00:00Z"), // Jun 12 Prop A — 3pm ET
+  new Date("2026-06-12T19:00:00Z"), // Jun 12 Prop A — noon PT
   new Date("2026-06-12T19:00:00Z"), // Jun 12 Prop B
-  new Date("2026-06-13T19:00:00Z"), // Jun 13 Prop A — 3pm ET
+  new Date("2026-06-13T19:00:00Z"), // Jun 13 Prop A — noon PT
   new Date("2026-06-13T19:00:00Z"), // Jun 13 Prop B
   new Date("2026-06-14T17:00:00Z"), // Jun 14 Prop A — 1pm ET
   new Date("2026-06-14T17:00:00Z"), // Jun 14 Prop B
-  new Date("2026-06-15T16:00:00Z"), // Jun 15 Prop A — noon ET
+  new Date("2026-06-15T16:00:00Z"), // Jun 15 Prop A — 9am PT
   new Date("2026-06-15T16:00:00Z"), // Jun 15 Prop B
-  new Date("2026-06-16T19:00:00Z"), // Jun 16 Prop A — 3pm ET
+  new Date("2026-06-16T19:00:00Z"), // Jun 16 Prop A — noon PT
   new Date("2026-06-16T19:00:00Z"), // Jun 16 Prop B
   new Date("2026-06-17T17:00:00Z"), // Jun 17 Prop A — 1pm ET
   new Date("2026-06-17T17:00:00Z"), // Jun 17 Prop B
-  new Date("2026-06-18T16:00:00Z"), // Jun 18 Prop A — noon ET
+  new Date("2026-06-18T16:00:00Z"), // Jun 18 Prop A — 9am PT
   new Date("2026-06-18T16:00:00Z"), // Jun 18 Prop B
-  new Date("2026-06-19T19:00:00Z"), // Jun 19 Prop A — 3pm ET
+  new Date("2026-06-19T19:00:00Z"), // Jun 19 Prop A — noon PT
   new Date("2026-06-19T19:00:00Z"), // Jun 19 Prop B
   new Date("2026-06-20T17:00:00Z"), // Jun 20 Prop A — 1pm ET
   new Date("2026-06-20T17:00:00Z"), // Jun 20 Prop B
-  new Date("2026-06-21T19:00:00Z"), // Jun 21 Prop A — 3pm ET
+  new Date("2026-06-21T19:00:00Z"), // Jun 21 Prop A — noon PT
   new Date("2026-06-21T19:00:00Z"), // Jun 21 Prop B
   new Date("2026-06-22T17:00:00Z"), // Jun 22 Prop A — 1pm ET
   new Date("2026-06-22T17:00:00Z"), // Jun 22 Prop B
@@ -245,7 +245,7 @@ const PROP_LOCKS = [
   new Date("2026-06-25T01:00:00Z"), // Jun 24 Prop B
   new Date("2026-06-25T23:00:00Z"), // Jun 25 Prop A — 7pm ET
   new Date("2026-06-25T23:00:00Z"), // Jun 25 Prop B
-  new Date("2026-06-26T19:00:00Z"), // Jun 26 Prop A — 3pm ET
+  new Date("2026-06-26T19:00:00Z"), // Jun 26 Prop A — noon PT
   new Date("2026-06-26T19:00:00Z"), // Jun 26 Prop B
   new Date("2026-06-27T21:00:00Z"), // Jun 27 Prop A — 5pm ET
   new Date("2026-06-27T21:00:00Z"), // Jun 27 Prop B
@@ -258,7 +258,7 @@ function isPropLocked(i) { return new Date() >= PROP_LOCKS[i]; }
 // ── PHASE 2 KNOCKOUT BRACKET ─────────────────────────────────────────────────
 // Phase 2 opens after group stage (Jun 27 evening) and locks Jun 28 at kickoff
 const PHASE2_OPEN  = new Date("2026-06-28T00:00:00Z"); // Jun 27 8pm ET
-const PHASE2_LOCK  = new Date("2026-06-28T16:00:00Z"); // Jun 28 noon ET
+const PHASE2_LOCK  = new Date("2026-06-28T16:00:00Z"); // Jun 28 9am PT
 
 function isPhase2Open()   { return new Date() >= PHASE2_OPEN; }
 function isPhase2Locked() { return new Date() >= PHASE2_LOCK; }
@@ -524,7 +524,7 @@ Return ONLY valid JSON, no markdown:
     { "home": "Team A", "away": "Team B", "homeScore": 1, "awayScore": 0, "minute": "67'", "group": "A", "status": "LIVE" }
   ],
   "upcoming": [
-    { "home": "Team C", "away": "Team D", "kickoff": "3:00 PM ET", "group": "B", "status": "upcoming" }
+    { "home": "Team C", "away": "Team D", "kickoff": "noon PT", "group": "B", "status": "upcoming" }
   ],
   "completed": [
     { "home": "Team E", "away": "Team F", "homeScore": 2, "awayScore": 1, "group": "C", "status": "FT" }
@@ -569,8 +569,41 @@ const S = {
   pill: (a) => ({ padding:"3px 10px", borderRadius:4, border:"none", background:a?"#c8a84b":"rgba(255,255,255,0.08)", color:a?"#0a1628":"#9ab8a0", cursor:"pointer", fontSize:11, fontWeight:"bold" }),
 };
 
-// ── MATCH TICKER / COUNTDOWN ─────────────────────────────────────────────────
-const TOURNAMENT_START = new Date("2026-06-11T19:00:00Z"); // Jun 11 3pm ET
+// ── DAILY ROTATING QUOTE ─────────────────────────────────────────────────────
+const QUOTES = [
+  { text: "Taking on a challenge is a lot like riding a horse. If you're comfortable while you're doing it, you're probably doing it wrong.", author: "Ted Lasso" },
+  { text: "Believe.", author: "Ted Lasso" },
+  { text: "Be curious, not judgmental.", author: "Ted Lasso" },
+  { text: "I think that you might be so sure that you're one in a million that sometimes you forget that out there you're just one in eleven.", author: "Ted Lasso" },
+  { text: "You know what the happiest animal on Earth is? It's a goldfish. You know why? It's got a ten second memory.", author: "Ted Lasso" },
+  { text: "There's no crying in baseball!", author: "A League of Their Own" },
+  { text: "Are you trying to tell me Jesus Christ can't hit a curveball?", author: "Bull Durham" },
+  { text: "If you build it, he will come.", author: "Field of Dreams" },
+  { text: "The first rule of Fight Club is… wait, wrong movie. Just win.", author: "Coach wisdom" },
+  { text: "Show me the money!", author: "Jerry Maguire" },
+  { text: "It's supposed to be hard. If it wasn't hard, everyone would do it. The hard is what makes it great.", author: "A League of Their Own" },
+  { text: "I feel the need… the need for speed.", author: "Top Gun (close enough)" },
+  { text: "Remember the Titans? Well, remember to submit your picks.", author: "Pool admin" },
+  { text: "Clear eyes, full hearts, can't lose.", author: "Friday Night Lights" },
+  { text: "Every game is an opportunity to measure yourself against your own potential.", author: "Herb Brooks, Miracle" },
+  { text: "Do you believe in miracles? YES!", author: "Al Michaels, Miracle on Ice" },
+  { text: "Pain heals. Chicks dig scars. Glory lasts forever.", author: "The Replacements" },
+  { text: "We're gonna need a bigger boat." , author: "Jaws (still applies to bracket picks)" },
+  { text: "Why do you think I came here? It wasn't for the weather.", author: "Ted Lasso" },
+  { text: "The idea is to get the ball, move the ball.", author: "Ted Lasso" },
+  { text: "I always thought I couldn't stand more than 2 hours of cricket. How wrong I was — I cannot stand more than 20 minutes.", author: "Ted Lasso" },
+  { text: "You say impossible, but all I hear is I'm possible.", author: "Ted Lasso" },
+  { text: "Making a decision is like riding a bike — if you second guess yourself, you fall off.", author: "Keeley Jones, Ted Lasso" },
+];
+
+function getDailyQuote() {
+  const day = Math.floor(Date.now() / 86400000); // changes every 24h UTC
+  return QUOTES[day % QUOTES.length];
+}
+
+// Italy's last World Cup match: July 9, 2006 Final vs France
+const ITALY_LAST_WC = new Date("2006-07-09T18:00:00Z");
+const TOURNAMENT_START = new Date("2026-06-11T19:00:00Z"); // Jun 11 noon PT
 
 function CountdownTimer() {
   const [tick, setTick] = useState(Date.now());
@@ -584,12 +617,11 @@ function CountdownTimer() {
   const hours = Math.floor((diff % 86400000) / 3600000);
   const mins  = Math.floor((diff % 3600000) / 60000);
   const secs  = Math.floor((diff % 60000) / 1000);
-  const ms    = Math.floor((diff % 1000) / 10); // 2-digit centiseconds
 
   const unit = (val, label) => (
     <div style={{ textAlign:"center", minWidth:52 }}>
       <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
-        {String(val).padStart(label === "MS" ? 2 : 2, "0")}
+        {String(val).padStart(2, "0")}
       </div>
       <div style={{ fontSize:9, color:"#9ab8a0", letterSpacing:1, marginTop:3 }}>{label}</div>
     </div>
@@ -599,7 +631,7 @@ function CountdownTimer() {
   return (
     <div style={{ ...S.card, background:"linear-gradient(135deg,rgba(10,22,40,0.9),rgba(13,32,64,0.9))", borderColor:"rgba(200,168,75,0.5)", textAlign:"center" }}>
       <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:2, marginBottom:12 }}>⏳ TOURNAMENT KICKOFF</div>
-      <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:14 }}>Mexico 🇲🇽 vs 🇿🇦 South Africa · June 11 · 3:00 PM ET</div>
+      <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:14 }}>Mexico 🇲🇽 vs 🇿🇦 South Africa · June 11 · noon PT</div>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
         {unit(days, "DAYS")}
         {sep}
@@ -608,8 +640,27 @@ function CountdownTimer() {
         {unit(mins, "MIN")}
         {sep}
         {unit(secs, "SEC")}
-        {sep}
-        {unit(ms, "MS")}
+      </div>
+    </div>
+  );
+}
+
+function ItalyCounter() {
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  const diff = Math.max(0, tick - ITALY_LAST_WC.getTime());
+  const days  = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const mins  = Math.floor((diff % 3600000) / 60000);
+  const secs  = Math.floor((diff % 60000) / 1000);
+  return (
+    <div style={{ background:"rgba(0,56,168,0.08)", border:"1px solid rgba(0,56,168,0.25)", borderRadius:8, padding:"8px 14px", marginBottom:14, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:6 }}>
+      <div style={{ fontSize:10, color:"rgba(200,180,120,0.6)", fontStyle:"italic" }}>🇮🇹 Days since Italy last played in a World Cup</div>
+      <div style={{ fontSize:11, color:"rgba(200,180,120,0.55)", fontVariantNumeric:"tabular-nums", letterSpacing:0.5 }}>
+        {days.toLocaleString()}d {String(hours).padStart(2,"0")}h {String(mins).padStart(2,"0")}m {String(secs).padStart(2,"0")}s
       </div>
     </div>
   );
@@ -1451,7 +1502,7 @@ export default function WorldCupPool() {
               {/* Lock times */}
               <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
-                {[["🏅 Group rankings + all Day 1 props","Jun 11 at 3pm ET — tournament kickoff (Mexico vs South Africa)"],["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],["🏆 Bracket picks","Jun 28 at noon ET — right after the group stage ends"]].map(([l,v]) => (
+                {[["🏅 Group rankings + all Day 1 props","Jun 11 at noon PT — tournament kickoff (Mexico vs South Africa)"],["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],["🏆 Bracket picks","Jun 28 at 9am PT — right after the group stage ends"]].map(([l,v]) => (
                   <div key={l} style={{ fontSize:12, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
                     <div style={{ color:"#ff9090", fontWeight:"bold", marginBottom:2 }}>{l}</div>
                     <div style={{ color:"#9ab8a0" }}>{v}</div>
@@ -1481,7 +1532,7 @@ export default function WorldCupPool() {
               {s==="home" ? "🏠 Home" : "🏆 Board"}
             </button>
           ))}
-          <button style={{ ...S.navBtn(false), background:"rgba(100,150,255,0.25)", color:"#aab0ff" }} onClick={() => setShowHowItWorks(true)}>
+          <button style={{ ...S.navBtn(false), background:"rgba(200,168,75,0.2)", color:"#0a1628" }} onClick={() => setShowHowItWorks(true)}>
             ❓ Rules
           </button>
           {currentPlayer && !isAdmin && (
@@ -1494,12 +1545,8 @@ export default function WorldCupPool() {
           {isAdmin && (
             <button style={S.navBtn(screen==="admin")} onClick={() => setScreen("admin")}>⚙️ Admin</button>
           )}
-          <button style={{ ...S.navBtn(false), background:"rgba(0,100,40,0.4)", color:"#8fffb0" }}
-            onClick={refreshScores} disabled={fetchStatus==="loading"}>
-            {fetchStatus==="loading" ? "⏳" : "🔄"} Live
-          </button>
           {currentPlayer ? (
-            <button style={{ ...S.navBtn(false), background:"rgba(200,60,60,0.3)", color:"#ff9090" }}
+            <button style={{ ...S.navBtn(false), background:"rgba(180,60,60,0.5)", color:"#ffdddd" }}
               onClick={() => { setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }}>
               Logout
             </button>
@@ -1533,6 +1580,17 @@ export default function WorldCupPool() {
               <h1 style={{ margin:0, fontSize:24, color:"#f0d060" }}>World Cup Pool</h1>
               <p style={{ color:"#9ab8a0", fontSize:12, margin:"4px 0 0" }}>Phase 1: Group Stage · June 11–27 · Backed by Firebase ☁️</p>
             </div>
+
+            {/* Daily quote */}
+            {(() => {
+              const q = getDailyQuote();
+              return (
+                <div style={{ textAlign:"center", padding:"2px 8px 16px", marginBottom:0 }}>
+                  <div style={{ fontSize:13, color:"#c8b8a0", fontStyle:"italic", lineHeight:1.6 }}>"{q.text}"</div>
+                  <div style={{ fontSize:10, color:"#9ab8a0", marginTop:4 }}>— {q.author}</div>
+                </div>
+              );
+            })()}
 
             {/* Countdown or live ticker */}
             {new Date() < TOURNAMENT_START
@@ -1588,24 +1646,10 @@ export default function WorldCupPool() {
               );
             })()}
 
-            <div style={S.card}>
-              <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📊 PHASE 1 SCORING · Max {MAX_PTS} pts</div>
-              {[
-                ["🏅 Group Rankings", `6 pts exact position · 2 pts correct half · max ${MAX_RANKING_PTS} pts`],
-                ["🎲 Daily Props (34)", `3–9 pts per side (YES/NO weighted) · max ~${MAX_PROP_PTS} pts`],
-                ["🏆 Phase 2", isPhase2Open() ? `Knockout bracket · max ${MAX_PHASE2_PTS} pts` : "Knockout bracket — unlocks Jun 28 after group stage"],
-              ].map(([l,v]) => (
-                <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:12, gap:8 }}>
-                  <span style={{ minWidth:140 }}>{l}</span>
-                  <span style={{ color:"#9ab8a0", textAlign:"right" }}>{v}</span>
-                </div>
-              ))}
-            </div>
-
             <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.08)" }}>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>🔒 WHEN PICKS LOCK</div>
               {[
-                ["🏅 Group Rankings", "Lock at tournament kickoff — Jun 11 at 3pm ET (Mexico vs South Africa). You cannot change your group standings after this."],
+                ["🏅 Group Rankings", "Lock at tournament kickoff — Jun 11 at noon PT (Mexico vs South Africa). You cannot change your group standings after this."],
                 ["🎲 Daily Props", "Each prop locks before the first match of that day. Once the day's games start, your answer is final."],
                 ["⚠️ Submit early!", "Don't wait until the last minute — picks that aren't saved before the deadline won't count."],
               ].map(([l,v]) => (
@@ -1614,10 +1658,6 @@ export default function WorldCupPool() {
                   <span style={{ color:"#9ab8a0" }}>{v}</span>
                 </div>
               ))}
-            </div>
-
-            <div style={{ ...S.card, borderColor:"rgba(100,200,255,0.3)", background:"rgba(0,80,160,0.15)" }}>
-              <div style={{ fontSize:12, color:"#80d0ff" }}>☁️ <strong>Persistent pool</strong> — data saved to Firebase. Share this link with anyone; their picks save permanently and the leaderboard updates for everyone in real time.</div>
             </div>
 
             {/* Login */}
@@ -1714,10 +1754,11 @@ export default function WorldCupPool() {
               )}
             </div>
 
+            {/* Italy counter — easter egg */}
+            <ItalyCounter />
+
           </div>
         )}
-
-        {/* ── PREDICT ── */}
         {screen==="predict" && currentPlayer && (
           <div>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
@@ -1893,7 +1934,7 @@ export default function WorldCupPool() {
                 </div>
                 {isGroupRankingsLocked()
                   ? <div style={{ fontSize:11, color:"#ff9090", marginTop:10 }}>🔒 Locked at tournament kickoff</div>
-                  : <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10 }}>Locks Jun 11 at 3pm ET with group rankings</div>
+                  : <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10 }}>Locks Jun 11 at noon PT with group rankings</div>
                 }
               </div>
             )}
@@ -1907,7 +1948,7 @@ export default function WorldCupPool() {
                   </div>
                 ) : (
                   <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
-                    Pick the winner of every knockout match. Locks Jun 28 at noon ET.<br/>
+                    Pick the winner of every knockout match. Locks Jun 28 at 9am PT.<br/>
                     <span style={{ color:"#f0d060" }}>+2</span> R32 · <span style={{ color:"#f0d060" }}>+4</span> R16 · <span style={{ color:"#f0d060" }}>+8</span> QF · <span style={{ color:"#f0d060" }}>+16</span> SF · <span style={{ color:"#f0d060" }}>+32</span> Final
                   </div>
                 )}
