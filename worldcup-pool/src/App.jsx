@@ -279,7 +279,7 @@ function isPhase2Open()   { return new Date() >= PHASE2_OPEN; }
 function isPhase2Locked() { return new Date() >= PHASE2_LOCK; }
 
 // Round point values
-const ROUND_PTS = { r32: 2, r16: 4, qf: 8, sf: 16, final: 32 };
+const ROUND_PTS = { r32: 4, r16: 8, qf: 16, sf: 32, final: 64, third: 8 };
 
 // Knockout rounds structure — team slots filled from group results
 // Before group stage ends, slots show as "TBD (Group X Winner)" etc.
@@ -305,10 +305,41 @@ const KNOCKOUT_ROUNDS = {
   r16:   Array.from({length:8},  (_,i) => ({ id:`r16_${i+1}`,  label:`R16 Match ${i+1}`,  slotA:`W_r32_${i*2+1}`, slotB:`W_r32_${i*2+2}` })),
   qf:    Array.from({length:4},  (_,i) => ({ id:`qf_${i+1}`,   label:`QF Match ${i+1}`,   slotA:`W_r16_${i*2+1}`, slotB:`W_r16_${i*2+2}` })),
   sf:    Array.from({length:2},  (_,i) => ({ id:`sf_${i+1}`,   label:`SF Match ${i+1}`,   slotA:`W_qf_${i*2+1}`,  slotB:`W_qf_${i*2+2}` })),
+  third: [{ id:"third_1", label:"3rd Place", slotA:"L_sf_1", slotB:"L_sf_2" }],
   final: [{ id:"final_1", label:"Final", slotA:"W_sf_1", slotB:"W_sf_2" }],
 };
 
-const ROUND_LABELS = { r32:"Round of 32", r16:"Round of 16", qf:"Quarter-Finals", sf:"Semi-Finals", final:"Final" };
+const ROUND_LABELS = { r32:"Round of 32", r16:"Round of 16", qf:"Quarter-Finals", sf:"Semi-Finals", third:"3rd Place", final:"Final" };
+
+// Bracket tree — maps each match to which match its winner feeds into
+// Used to cascade-clear conflicting picks when a pick changes
+const BRACKET_FEED = {
+  // R32 winners feed into R16
+  r32_1:"r16_1", r32_2:"r16_1", r32_3:"r16_2", r32_4:"r16_2",
+  r32_5:"r16_3", r32_6:"r16_3", r32_7:"r16_4", r32_8:"r16_4",
+  r32_9:"r16_5", r32_10:"r16_5", r32_11:"r16_6", r32_12:"r16_6",
+  r32_13:"r16_7", r32_14:"r16_7", r32_15:"r16_8", r32_16:"r16_8",
+  // R16 winners feed into QF
+  r16_1:"qf_1", r16_2:"qf_1", r16_3:"qf_2", r16_4:"qf_2",
+  r16_5:"qf_3", r16_6:"qf_3", r16_7:"qf_4", r16_8:"qf_4",
+  // QF winners feed into SF
+  qf_1:"sf_1", qf_2:"sf_1", qf_3:"sf_2", qf_4:"sf_2",
+  // SF winners feed into Final; SF losers feed into 3rd place
+  sf_1:"final_1", sf_2:"final_1",
+};
+
+// Get all downstream match IDs that depend on a given match's winner
+function getDownstreamMatches(matchId) {
+  const downstream = [];
+  let current = BRACKET_FEED[matchId];
+  while (current) {
+    downstream.push(current);
+    current = BRACKET_FEED[current];
+  }
+  // SF losers also feed 3rd place
+  if (matchId === "sf_1" || matchId === "sf_2") downstream.push("third_1");
+  return downstream;
+}
 
 // ── PHASE 2 PROPS ─────────────────────────────────────────────────────────────
 // 15 props across 5 rounds (3 per round), each locking at that round's first kickoff
@@ -355,7 +386,7 @@ function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round]
 
 function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot) {
   let pts = 0;
-  // Bracket points
+  // Bracket points (includes third place)
   if (phase2Picks && livePhase2) {
     Object.entries(ROUND_PTS).forEach(([round, roundPts]) => {
       const matches = KNOCKOUT_ROUNDS[round] || [];
@@ -1217,6 +1248,281 @@ function RankPicker({ teams, ranking, onChange, locked=false }) {
   );
 }
 
+// ── VISUAL BRACKET ────────────────────────────────────────────────────────────
+// Scrollable horizontal bracket: R32 left → Final center → R32 right
+// 16 matches per side, converging inward round by round
+// Left side: matches 1-8, Right side: matches 9-16
+function VisualBracket({ phase2Picks, setPhase2Picks, livePhase2, bracketSlots, locked, open }) {
+  const allTeams = Object.values(TEAMS_BY_GROUP).flat();
+
+  const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
+  const isKnown = (name) => allTeams.includes(name);
+  const isResolved = (slot) => bracketSlots?.[slot] != null;
+
+  // Get the team picked/won for a match (for propagation display)
+  const getPickedTeam = (matchId) => phase2Picks[matchId] || null;
+  const getActualTeam = (matchId) => livePhase2?.[matchId] || null;
+  const getDisplayTeam = (matchId) => getActualTeam(matchId) || getPickedTeam(matchId);
+
+  // Resolve a slot that might be W_xxx or L_xxx
+  const resolveMatchSlot = (slot) => {
+    if (slot.startsWith("W_")) {
+      const matchId = slot.slice(2);
+      return getDisplayTeam(matchId) || slot;
+    }
+    if (slot.startsWith("L_")) {
+      // SF loser — shown in 3rd place
+      const matchId = slot.slice(2);
+      const winner = getDisplayTeam(matchId);
+      if (winner) {
+        // Find the other team in that SF match
+        const sfMatch = KNOCKOUT_ROUNDS.sf.find(m => m.id === matchId);
+        if (sfMatch) {
+          const teamA = resolveMatchSlot(sfMatch.slotA);
+          const teamB = resolveMatchSlot(sfMatch.slotB);
+          return (teamA !== winner && teamA !== sfMatch.slotA) ? teamA :
+                 (teamB !== winner && teamB !== sfMatch.slotB) ? teamB : slot;
+        }
+      }
+      return slot;
+    }
+    return resolveSlot(slot);
+  };
+
+  // Cascade-clear downstream picks when a pick changes
+  function pickTeam(matchId, team) {
+    if (locked || !open) return;
+    setPhase2Picks(prev => {
+      const next = { ...prev };
+      const oldPick = prev[matchId];
+      next[matchId] = team;
+      // If pick changed, clear any downstream picks that had the old team
+      if (oldPick && oldPick !== team) {
+        const downstream = getDownstreamMatches(matchId);
+        downstream.forEach(downId => {
+          if (next[downId] === oldPick) delete next[downId];
+        });
+      }
+      return next;
+    });
+  }
+
+  // Column widths and layout constants
+  const COL_W = 110; // match card width
+  const COL_GAP = 28; // gap between rounds
+  const CARD_H = 52; // match card height
+  const ROUND_COUNT = 5; // R32, R16, QF, SF, Final (each side)
+
+  // Left side rounds: r32[0-7], r16[0-3], qf[0-1], sf[0], final
+  // Right side rounds: r32[8-15], r16[4-7], qf[2-3], sf[1], (same final)
+  const leftRounds = [
+    { key:"r32", matches: KNOCKOUT_ROUNDS.r32.slice(0,8), pts: ROUND_PTS.r32 },
+    { key:"r16", matches: KNOCKOUT_ROUNDS.r16.slice(0,4), pts: ROUND_PTS.r16 },
+    { key:"qf",  matches: KNOCKOUT_ROUNDS.qf.slice(0,2),  pts: ROUND_PTS.qf  },
+    { key:"sf",  matches: KNOCKOUT_ROUNDS.sf.slice(0,1),  pts: ROUND_PTS.sf  },
+  ];
+  const rightRounds = [
+    { key:"r32", matches: KNOCKOUT_ROUNDS.r32.slice(8,16), pts: ROUND_PTS.r32 },
+    { key:"r16", matches: KNOCKOUT_ROUNDS.r16.slice(4,8),  pts: ROUND_PTS.r16 },
+    { key:"qf",  matches: KNOCKOUT_ROUNDS.qf.slice(2,4),   pts: ROUND_PTS.qf  },
+    { key:"sf",  matches: KNOCKOUT_ROUNDS.sf.slice(1,2),   pts: ROUND_PTS.sf  },
+  ];
+
+  const totalW = (COL_W + COL_GAP) * ROUND_COUNT * 2 + COL_W + 40; // ~1490px
+
+  // Render a single match card
+  function MatchCard({ match, roundKey, pts, side }) {
+    const slotA = match.slotA.startsWith("W_") || match.slotA.startsWith("L_")
+      ? resolveMatchSlot(match.slotA) : resolveSlot(match.slotA);
+    const slotB = match.slotB.startsWith("W_") || match.slotB.startsWith("L_")
+      ? resolveMatchSlot(match.slotB) : resolveSlot(match.slotB);
+
+    const rawSlotA = match.slotA;
+    const rawSlotB = match.slotB;
+    const slotAResolved = rawSlotA.startsWith("W_") || rawSlotA.startsWith("L_")
+      ? true : isResolved(rawSlotA);
+    const slotBResolved = rawSlotB.startsWith("W_") || rawSlotB.startsWith("L_")
+      ? true : isResolved(rawSlotB);
+
+    const pick = phase2Picks[match.id];
+    const actual = livePhase2?.[match.id];
+    const won = actual && pick === actual;
+    const lost = actual && pick && pick !== actual;
+
+    const canPick = open && !locked && slotAResolved && slotBResolved;
+
+    const TeamBtn = ({ team, rawSlot, resolved }) => {
+      const isPick = pick === team;
+      const isActual = actual === team;
+      const isWon = isActual && isPick;
+      const isLost = isActual && pick && !isPick;
+      return (
+        <button
+          onClick={() => canPick && team !== rawSlot && pickTeam(match.id, team)}
+          style={{
+            width:"100%", padding:"4px 6px", border:"1px solid",
+            borderColor: isWon?"rgba(100,255,150,0.6)":isPick?"#f0d060":isLost?"rgba(255,100,100,0.3)":"rgba(255,255,255,0.1)",
+            background: isWon?"rgba(0,180,80,0.2)":isPick?"rgba(200,168,75,0.25)":isLost?"rgba(180,50,50,0.1)":"rgba(255,255,255,0.04)",
+            borderRadius:4, cursor: canPick && resolved && team !== rawSlot ? "pointer" : "default",
+            textAlign:"left", display:"flex", alignItems:"center", gap:4, minHeight:22,
+            opacity: (!canPick || !resolved) ? 0.5 : 1,
+          }}
+        >
+          {isKnown(team) && <span style={{ fontSize:11, flexShrink:0 }}>{FLAG[team]||"🏳️"}</span>}
+          <span style={{ fontSize:9, color: isPick?"#f0d060":isLost?"#ff9090":"#c8b8a0", fontWeight: isPick?"bold":"normal", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
+            {isKnown(team) ? team : resolved ? team : "TBD"}
+          </span>
+          {isWon && <span style={{ fontSize:8, color:"#8fffb0", flexShrink:0 }}>✓</span>}
+          {isLost && <span style={{ fontSize:8, color:"#ff9090", flexShrink:0 }}>✗</span>}
+        </button>
+      );
+    };
+
+    return (
+      <div style={{
+        width:COL_W, background:"rgba(255,255,255,0.05)", border:`1px solid ${won?"rgba(100,255,150,0.3)":lost?"rgba(255,100,100,0.2)":"rgba(200,168,75,0.15)"}`,
+        borderRadius:6, padding:"4px 5px", boxSizing:"border-box",
+      }}>
+        <div style={{ fontSize:8, color:"#9ab8a0", marginBottom:3, display:"flex", justifyContent:"space-between" }}>
+          <span>{match.label}</span>
+          <span style={{ color:"#f0d060" }}>+{pts}</span>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+          <TeamBtn team={slotA} rawSlot={rawSlotA} resolved={slotAResolved} />
+          <TeamBtn team={slotB} rawSlot={rawSlotB} resolved={slotBResolved} />
+        </div>
+      </div>
+    );
+  }
+
+  // Render a column of match cards with vertical spacing
+  function RoundColumn({ rounds_data, colIndex, align }) {
+    const { matches, pts, key } = rounds_data;
+    const spacing = Math.pow(2, colIndex); // 1, 2, 4, 8 gaps between cards
+    const topOffset = (spacing - 1) * (CARD_H + 8) / 2;
+
+    return (
+      <div style={{ display:"flex", flexDirection:"column", gap:(spacing * (CARD_H + 8) - CARD_H), paddingTop: topOffset, flexShrink:0 }}>
+        {matches.map(match => (
+          <MatchCard key={match.id} match={match} roundKey={key} pts={pts} />
+        ))}
+      </div>
+    );
+  }
+
+  // Center column: SF → Final + 3rd place
+  const finalMatch = KNOCKOUT_ROUNDS.final[0];
+  const thirdMatch = KNOCKOUT_ROUNDS.third[0];
+  const finalSlotA = resolveMatchSlot(finalMatch.slotA);
+  const finalSlotB = resolveMatchSlot(finalMatch.slotB);
+  const thirdSlotA = resolveMatchSlot(thirdMatch.slotA);
+  const thirdSlotB = resolveMatchSlot(thirdMatch.slotB);
+
+  return (
+    <div style={{ overflowX:"auto", overflowY:"visible", WebkitOverflowScrolling:"touch", marginLeft:-14, marginRight:-14, paddingLeft:14 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:COL_GAP, paddingBottom:16, paddingRight:14, minWidth: totalW }}>
+
+        {/* LEFT SIDE — rounds going inward */}
+        {leftRounds.map((rd, i) => (
+          <RoundColumn key={`left-${i}`} rounds_data={rd} colIndex={i} align="left" />
+        ))}
+
+        {/* CENTER — Final + 3rd place */}
+        <div style={{ flexShrink:0, display:"flex", flexDirection:"column", gap:12, alignItems:"center" }}>
+          {/* Final */}
+          <div style={{ width: COL_W + 20 }}>
+            <div style={{ fontSize:9, color:"#f0d060", fontWeight:"bold", textAlign:"center", marginBottom:4, letterSpacing:1 }}>🏆 FINAL</div>
+            <div style={{
+              background:"rgba(200,168,75,0.08)", border:"1px solid rgba(200,168,75,0.4)",
+              borderRadius:8, padding:"6px 7px",
+            }}>
+              <div style={{ fontSize:8, color:"#f0d060", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
+                <span>Final</span><span>+{ROUND_PTS.final}</span>
+              </div>
+              {[
+                [finalMatch.slotA, finalSlotA],
+                [finalMatch.slotB, finalSlotB],
+              ].map(([rawSlot, team]) => {
+                const pick = phase2Picks[finalMatch.id];
+                const actual = livePhase2?.[finalMatch.id];
+                const isPick = pick === team;
+                const isActual = actual === team;
+                const resolved = team !== rawSlot;
+                return (
+                  <button key={rawSlot}
+                    onClick={() => resolved && pickTeam(finalMatch.id, team)}
+                    style={{
+                      width:"100%", padding:"5px 7px", border:"1px solid", marginBottom:3,
+                      borderColor: isPick?"#f0d060":isActual?"rgba(100,255,150,0.5)":"rgba(255,255,255,0.1)",
+                      background: isPick?"rgba(200,168,75,0.3)":isActual?"rgba(0,180,80,0.15)":"rgba(255,255,255,0.04)",
+                      borderRadius:4, cursor: resolved ? "pointer" : "default",
+                      display:"flex", alignItems:"center", gap:5, minHeight:26,
+                      opacity: resolved ? 1 : 0.4,
+                    }}
+                  >
+                    {isKnown(team) && <span style={{ fontSize:13 }}>{FLAG[team]||"🏳️"}</span>}
+                    <span style={{ fontSize:10, color: isPick?"#f0d060":"#c8b8a0", fontWeight: isPick?"bold":"normal", lineHeight:1.2, flex:1, textAlign:"left", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {isKnown(team) ? team : "TBD"}
+                    </span>
+                    {isPick && actual === team && <span style={{ fontSize:10 }}>🏆</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 3rd Place */}
+          <div style={{ width: COL_W + 20 }}>
+            <div style={{ fontSize:9, color:"#c8b8a0", fontWeight:"bold", textAlign:"center", marginBottom:4, letterSpacing:1 }}>🥉 3RD PLACE</div>
+            <div style={{
+              background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.1)",
+              borderRadius:8, padding:"6px 7px",
+            }}>
+              <div style={{ fontSize:8, color:"#9ab8a0", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
+                <span>3rd Place</span><span style={{ color:"#f0d060" }}>+{ROUND_PTS.third}</span>
+              </div>
+              {[
+                [thirdMatch.slotA, thirdSlotA],
+                [thirdMatch.slotB, thirdSlotB],
+              ].map(([rawSlot, team]) => {
+                const pick = phase2Picks[thirdMatch.id];
+                const actual = livePhase2?.[thirdMatch.id];
+                const isPick = pick === team;
+                const isActual = actual === team;
+                const resolved = team !== rawSlot;
+                return (
+                  <button key={rawSlot}
+                    onClick={() => resolved && pickTeam(thirdMatch.id, team)}
+                    style={{
+                      width:"100%", padding:"4px 6px", border:"1px solid", marginBottom:3,
+                      borderColor: isPick?"#f0d060":isActual?"rgba(100,255,150,0.5)":"rgba(255,255,255,0.1)",
+                      background: isPick?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
+                      borderRadius:4, cursor: resolved ? "pointer" : "default",
+                      display:"flex", alignItems:"center", gap:4, minHeight:22,
+                      opacity: resolved ? 1 : 0.4,
+                    }}
+                  >
+                    {isKnown(team) && <span style={{ fontSize:11 }}>{FLAG[team]||"🏳️"}</span>}
+                    <span style={{ fontSize:9, color: isPick?"#f0d060":"#c8b8a0", fontWeight: isPick?"bold":"normal", lineHeight:1.2, flex:1, textAlign:"left", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {isKnown(team) ? team : "TBD"}
+                    </span>
+                    {isPick && actual === team && <span style={{ fontSize:9 }}>🥉</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT SIDE — rounds going outward */}
+        {[...rightRounds].reverse().map((rd, i) => (
+          <RoundColumn key={`right-${i}`} rounds_data={rd} colIndex={rightRounds.length - 1 - i} align="right" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── APP ───────────────────────────────────────────────────────────────────────
 export default function WorldCupPool() {
   const [siteUnlocked, setSiteUnlocked]   = useState(() => {
@@ -1781,7 +2087,7 @@ export default function WorldCupPool() {
                 <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Opens Jun 27 evening. Bracket picks lock Jun 28 at noon ET.</div>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Bracket — pick every match winner:</div>
                 <div style={{ display:"flex", flexDirection:"column", gap:5, fontSize:12, marginBottom:12 }}>
-                  {[["Round of 32","2 pts"],["Round of 16","4 pts"],["Quarter-Finals","8 pts"],["Semi-Finals","16 pts"],["Final","32 pts"]].map(([r,p]) => (
+                  {[["Round of 32","4 pts"],["Round of 16","8 pts"],["Quarter-Finals","16 pts"],["Semi-Finals","32 pts"],["3rd Place","8 pts"],["Final","64 pts"]].map(([r,p]) => (
                     <div key={r} style={{ display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(255,255,255,0.05)", padding:"3px 0" }}>
                       <span style={{ color:"#c8b8a0" }}>{r}</span>
                       <span style={{ color:"#f0d060", fontWeight:"bold" }}>{p} per correct pick</span>
@@ -1807,7 +2113,7 @@ export default function WorldCupPool() {
                 {[
                   ["🏅 Group rankings + Day 1 props","Jun 11 at noon PT — tournament kickoff (Mexico vs South Africa)"],
                   ["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],
-                  ["🏆 Bracket picks + Golden Boot","Jun 28 at noon ET — right after the group stage ends"],
+                  ["🏆 Bracket picks + Golden Boot","Jun 28 at noon ET — right after the group stage ends. Includes 3rd place match."],
                   ["🎲 P2 props (R16–Final)","Each round's 3 props lock at that round's first kickoff"],
                 ].map(([l,v]) => (
                   <div key={l} style={{ fontSize:12, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
@@ -2279,68 +2585,39 @@ export default function WorldCupPool() {
                   </div>
                 )}
                 {isPhase2Open() && !isPhase2Locked() && (
-                  <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
-                    Pick the winner of every knockout match. Locks Jun 28 at noon ET.<br/>
-                    <span style={{ color:"#f0d060" }}>+2</span> R32 · <span style={{ color:"#f0d060" }}>+4</span> R16 · <span style={{ color:"#f0d060" }}>+8</span> QF · <span style={{ color:"#f0d060" }}>+16</span> SF · <span style={{ color:"#f0d060" }}>+32</span> Final
+                  <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:10 }}>
+                    Tap a team to advance them. Locks Jun 28 at noon ET. Changing a pick clears conflicting downstream picks.<br/>
+                    <span style={{ color:"#f0d060" }}>+4</span> R32 · <span style={{ color:"#f0d060" }}>+8</span> R16 · <span style={{ color:"#f0d060" }}>+16</span> QF · <span style={{ color:"#f0d060" }}>+32</span> SF · <span style={{ color:"#f0d060" }}>+8</span> 3rd · <span style={{ color:"#f0d060" }}>+64</span> Final
                   </div>
                 )}
-                {/* Round tabs */}
-                <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:14 }}>
-                  {Object.entries(ROUND_LABELS).map(([round, label]) => {
-                    const done = (KNOCKOUT_ROUNDS[round]||[]).filter(m => phase2Picks[m.id]).length;
-                    const total = (KNOCKOUT_ROUNDS[round]||[]).length;
-                    return (
-                      <button key={round} style={S.pill(phase2Tab===round)} onClick={() => setPhase2Tab(round)}>
-                        {label} {done}/{total}
-                      </button>
-                    );
-                  })}
-                </div>
-                {(KNOCKOUT_ROUNDS[phase2Tab]||[]).map(match => {
-                  const pick = phase2Picks[match.id];
-                  const actual = livePhase2?.[match.id];
-                  const won = actual && pick === actual;
-                  const lost = actual && pick && pick !== actual;
-                  const pts = ROUND_PTS[phase2Tab];
-                  // Resolve slot to actual team name if available
-                  const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
-                  const teamA = resolveSlot(match.slotA);
-                  const teamB = resolveSlot(match.slotB);
-                  const isKnownTeam = (name) => Object.values(TEAMS_BY_GROUP).flat().includes(name);
-                  const isResolved = (slot) => bracketSlots?.[slot] != null;
+                {!isPhase2Open() && (
+                  <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10 }}>
+                    <span style={{ color:"#f0d060" }}>+4</span> R32 · <span style={{ color:"#f0d060" }}>+8</span> R16 · <span style={{ color:"#f0d060" }}>+16</span> QF · <span style={{ color:"#f0d060" }}>+32</span> SF · <span style={{ color:"#f0d060" }}>+8</span> 3rd · <span style={{ color:"#f0d060" }}>+64</span> Final
+                  </div>
+                )}
+                {/* Pick progress */}
+                {(() => {
+                  const allMatches = Object.values(KNOCKOUT_ROUNDS).flat();
+                  const picked = allMatches.filter(m => phase2Picks[m.id]).length;
                   return (
-                    <div key={match.id} style={{ ...S.card, marginBottom:8, borderColor: won?"rgba(100,255,150,0.3)":lost?"rgba(255,100,100,0.2)":"rgba(200,168,75,0.2)" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8, fontSize:11 }}>
-                        <span style={{ color:"#9ab8a0" }}>{match.label}</span>
-                        <span style={{ color: pts===32?"#ff9f50":pts>=16?"#f0d060":"#9ab8a0", fontWeight:"bold" }}>+{pts} pts</span>
+                    <div style={{ marginBottom:12 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#9ab8a0", marginBottom:3 }}>
+                        <span>Bracket picks</span><span>{picked}/{allMatches.length}</span>
                       </div>
-                      {actual && (
-                        <div style={{ fontSize:11, marginBottom:8, padding:"4px 8px", borderRadius:4, background: won?"rgba(0,180,80,0.15)":"rgba(180,50,50,0.12)", color: won?"#8fffb0":"#ff9090" }}>
-                          Winner: {isKnownTeam(actual) ? `${tf(actual)} ` : ""}{actual} {won?"🎉 +"+pts+" pts":lost?"😬":""}
-                        </div>
-                      )}
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                        {[[match.slotA, teamA], [match.slotB, teamB]].map(([slot, team]) => (
-                          <button key={slot} onClick={() => {
-                            if (isPhase2Locked() || !isPhase2Open()) return;
-                            setPhase2Picks(prev => ({ ...prev, [match.id]: team }));
-                          }} style={{
-                            padding:"10px 6px", borderRadius:8, border:"2px solid",
-                            borderColor: pick===team?"#f0d060":"rgba(255,255,255,0.1)",
-                            background: pick===team?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
-                            color: pick===team?"#f0d060":"#c8b8a0",
-                            cursor: (isPhase2Locked()||!isPhase2Open())?"default":"pointer", fontSize:11, textAlign:"center",
-                            opacity: (isPhase2Locked()||!isPhase2Open()) && pick!==team ? 0.5 : 1,
-                          }}>
-                            {isKnownTeam(team) && <div style={{ marginBottom:4 }}>{tf(team)}</div>}
-                            <div style={{ fontWeight: pick===team?"bold":"normal" }}>{team}</div>
-                            {!isResolved(slot) && <div style={{ fontSize:9, color:"#9ab8a0", marginTop:2 }}>TBD</div>}
-                          </button>
-                        ))}
+                      <div style={{ height:4, background:"rgba(255,255,255,0.08)", borderRadius:2, overflow:"hidden" }}>
+                        <div style={{ height:"100%", width:`${(picked/allMatches.length)*100}%`, background:"linear-gradient(90deg,#c8a84b,#f0d060)", borderRadius:2, transition:"width 0.3s" }} />
                       </div>
                     </div>
                   );
-                })}
+                })()}
+                <VisualBracket
+                  phase2Picks={phase2Picks}
+                  setPhase2Picks={setPhase2Picks}
+                  livePhase2={livePhase2}
+                  bracketSlots={bracketSlots}
+                  locked={isPhase2Locked()}
+                  open={isPhase2Open()}
+                />
               </div>
             )}
 
