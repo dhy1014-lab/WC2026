@@ -7,22 +7,37 @@ async function dbLoad() {
   const r = await fetch(`${DB_URL}/pool.json`);
   if (!r.ok) throw new Error(`Firebase error ${r.status}`);
   const data = await r.json();
-  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] } };
+  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] }, goldenBoot: null, bracketSlots: null, liveP2Props: null };
   return {
     players: data.players || [],
     predictions: data.predictions || {},
     paid: data.paid || {},
     settings: data.settings || { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] },
+    goldenBoot: data.goldenBoot || null,
+    bracketSlots: data.bracketSlots || null,
+    liveP2Props: data.liveP2Props || null,
   };
 }
 
-async function dbSave(players, predictions, paid, settings) {
+async function dbSave(players, predictions, paid, settings, goldenBoot) {
+  const body = { players, predictions, paid, settings };
+  if (goldenBoot !== undefined) body.goldenBoot = goldenBoot;
   const r = await fetch(`${DB_URL}/pool.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ players, predictions, paid, settings }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`Firebase save error ${r.status}`);
+}
+
+// Patch a single top-level key in pool without overwriting others
+async function dbPatch(key, value) {
+  const r = await fetch(`${DB_URL}/pool/${key}.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
+  });
+  if (!r.ok) throw new Error(`Firebase patch error ${r.status}`);
 }
 
 // ── MESSAGE BOARD HELPERS ────────────────────────────────────────────────────
@@ -295,17 +310,80 @@ const KNOCKOUT_ROUNDS = {
 
 const ROUND_LABELS = { r32:"Round of 32", r16:"Round of 16", qf:"Quarter-Finals", sf:"Semi-Finals", final:"Final" };
 
-function calcPhase2Points(phase2Picks, livePhase2) {
-  if (!phase2Picks || !livePhase2) return 0;
+// ── PHASE 2 PROPS ─────────────────────────────────────────────────────────────
+// 15 props across 5 rounds (3 per round), each locking at that round's first kickoff
+// ptsYes + ptsNo = 10 (weighted by likelihood); Golden Boot prop (#15) sums to 20
+const P2_PROPS = [
+  // R32 props — lock Jun 28 noon ET (first R32 kickoff)
+  { round:"r32", id:"p2_r32_a", q:"Will at least one R32 match be decided by a single goal in regulation?",         ptsYes:4, ptsNo:6, yes:"Single-goal winner somewhere",       no:"All R32 winners win by 2+" },
+  { round:"r32", id:"p2_r32_b", q:"Will at least one top-10 FIFA-ranked team be eliminated in the R32?",           ptsYes:5, ptsNo:5, yes:"Top-10 side knocked out",             no:"All top-10 sides survive" },
+  { round:"r32", id:"p2_r32_c", q:"Will there be a hat-trick in any R32 match (regulation or ET)?",               ptsYes:9, ptsNo:1, yes:"Hat-trick hero!",                     no:"No hat-tricks in the R32" },
+  // R16 props — lock ~Jul 3 (first R16 kickoff)
+  { round:"r16", id:"p2_r16_a", q:"Will a match-deciding goal be scored in 90+ stoppage time in any R16 match (regulation only)?", ptsYes:5, ptsNo:5, yes:"Late drama wins it!", no:"No stoppage-time deciders" },
+  { round:"r16", id:"p2_r16_b", q:"Will at least 3 of the 8 R16 matches go to ET or penalties?",                  ptsYes:5, ptsNo:5, yes:"3+ R16 matches go long",             no:"Fewer than 3 go to ET/pens" },
+  { round:"r16", id:"p2_r16_c", q:"Will a team from outside Europe or South America win an R16 match in regulation?", ptsYes:5, ptsNo:5, yes:"Non-Euro/SA side wins in 90",   no:"Only Euro/SA sides win in regulation" },
+  // QF props — lock ~Jul 7 (first QF kickoff)
+  { round:"qf",  id:"p2_qf_a",  q:"Will at least one QF be decided by penalties?",                                ptsYes:5, ptsNo:5, yes:"QF goes to a shootout",              no:"No QF shootouts" },
+  { round:"qf",  id:"p2_qf_b",  q:"Will there be a red card in any QF match (regulation or ET)?",                 ptsYes:6, ptsNo:4, yes:"Someone sees red in the QFs",         no:"All QFs stay at 11 v 11" },
+  { round:"qf",  id:"p2_qf_c",  q:"Will any QF winner win by 2+ goals in regulation?",                            ptsYes:4, ptsNo:6, yes:"Comfortable QF win by 2+",           no:"All QFs tight — 1 goal or less in regulation" },
+  // SF props — lock ~Jul 14 (first SF kickoff)
+  { round:"sf",  id:"p2_sf_a",  q:"Will at least one SF produce 3+ total goals in regulation?",                   ptsYes:5, ptsNo:5, yes:"3+ goals in a SF",                   no:"Both SFs stay under 3 goals in regulation" },
+  { round:"sf",  id:"p2_sf_b",  q:"Will either SF see a team fall behind and come back to win in regulation or ET?", ptsYes:5, ptsNo:5, yes:"Comeback win in a SF",           no:"No SF comebacks" },
+  { round:"sf",  id:"p2_sf_c",  q:"Will there be an own goal in either SF (regulation or ET)?",                   ptsYes:7, ptsNo:3, yes:"Own goal in a SF",                   no:"No SF own goals" },
+  // Final props — lock ~Jul 18 (Final kickoff)
+  { round:"final", id:"p2_final_a", q:"Will the Final go to ET or penalties?",                                    ptsYes:5, ptsNo:5, yes:"Final goes beyond 90",               no:"Final decided in regulation" },
+  { round:"final", id:"p2_final_b", q:"Will there be a red card in the Final (regulation or ET)?",                ptsYes:8, ptsNo:2, yes:"Red card in the Final!",              no:"No red cards in the Final" },
+  { round:"final", id:"p2_final_c", q:"Will the Final's first goal come from outside the box?",                   ptsYes:7, ptsNo:3, yes:"Long-range opener!",                  no:"First goal from inside the box" },
+];
+
+// Golden Boot prop — multi-choice, locks Jun 28 at R32 kickoff
+// options populated by auto-fetch after group stage; weights set dynamically
+// stored in Firebase at pool.goldenBoot: { options: [{name, pts}], answer: name|null }
+const GOLDEN_BOOT_LOCK = new Date("2026-06-28T16:00:00Z"); // Jun 28 noon ET
+function isGoldenBootLocked() { return new Date() >= GOLDEN_BOOT_LOCK; }
+
+// Per-round lock times for P2 props (approximate first kickoff of each round)
+// Will be refined once schedule is confirmed; these are best estimates
+const P2_PROP_LOCKS = {
+  r32:   new Date("2026-06-28T16:00:00Z"), // Jun 28 noon ET
+  r16:   new Date("2026-07-03T16:00:00Z"), // Jul 3 noon ET (approx)
+  qf:    new Date("2026-07-07T16:00:00Z"), // Jul 7 noon ET (approx)
+  sf:    new Date("2026-07-14T16:00:00Z"), // Jul 14 noon ET (approx)
+  final: new Date("2026-07-18T16:00:00Z"), // Jul 18 noon ET (approx)
+};
+function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round] || new Date("2099-01-01")); }
+
+function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot) {
   let pts = 0;
-  Object.entries(ROUND_PTS).forEach(([round, roundPts]) => {
-    const matches = KNOCKOUT_ROUNDS[round] || [];
-    matches.forEach(match => {
-      const pick = phase2Picks[match.id];
-      const actual = livePhase2?.[match.id];
-      if (pick && actual && pick === actual) pts += roundPts;
+  // Bracket points
+  if (phase2Picks && livePhase2) {
+    Object.entries(ROUND_PTS).forEach(([round, roundPts]) => {
+      const matches = KNOCKOUT_ROUNDS[round] || [];
+      matches.forEach(match => {
+        const pick = phase2Picks[match.id];
+        const actual = livePhase2?.[match.id];
+        if (pick && actual && pick === actual) pts += roundPts;
+      });
     });
-  });
+  }
+  // P2 prop points
+  if (phase2Picks && liveP2Props) {
+    P2_PROPS.forEach(prop => {
+      const pick = phase2Picks[prop.id];
+      const actual = liveP2Props?.[prop.id];
+      if (pick === null || pick === undefined || actual === null || actual === undefined) return;
+      if (pick === actual) pts += actual ? prop.ptsYes : prop.ptsNo;
+    });
+  }
+  // Golden Boot points
+  if (phase2Picks?.goldenBoot && goldenBoot?.answer && goldenBoot?.options) {
+    const pick = phase2Picks.goldenBoot;
+    const answer = goldenBoot.answer;
+    if (pick === answer) {
+      const opt = goldenBoot.options.find(o => o.name === pick);
+      if (opt) pts += opt.pts;
+    }
+  }
   return pts;
 }
 
@@ -361,9 +439,13 @@ function calcPoints(pred, live) {
   return pts;
 }
 
-const MAX_RANKING_PTS = 12 * 4 * 6; // 288 (doubled: 6 pts exact)
+const MAX_RANKING_PTS = 12 * 4 * 6; // 288
 const MAX_PROP_PTS = DAILY_PROPS.reduce((s, p) => s + Math.max(p.ptsYes, p.ptsNo), 0);
 const MAX_PTS = MAX_RANKING_PTS + MAX_PROP_PTS;
+// Phase 2 max: bracket + props + golden boot (max option 20)
+const MAX_BRACKET_PTS = Object.entries(ROUND_PTS).reduce((s, [round, pts]) => s + (KNOCKOUT_ROUNDS[round]||[]).length * pts, 0);
+const MAX_P2_PROP_PTS = P2_PROPS.reduce((s, p) => s + Math.max(p.ptsYes, p.ptsNo), 0);
+const MAX_PHASE2_PTS = MAX_BRACKET_PTS + MAX_P2_PROP_PTS + 20; // +20 for golden boot "Other"
 
 // Points progression per settled prop — used for sparkline chart
 function calcPointsTimeline(pred, live) {
@@ -476,21 +558,39 @@ Return ONLY the JSON.`;
 }
 
 // ── FETCH LIVE PHASE 2 RESULTS ───────────────────────────────────────────────
+// Fetches bracket winners + P2 prop results + P2 golden boot winner in one call
 async function fetchLivePhase2() {
   const matchList = Object.entries(KNOCKOUT_ROUNDS).flatMap(([round, matches]) =>
     matches.map(m => `${m.id} (${ROUND_LABELS[round]}: ${m.label}): winner team name or null`)
   ).join("\n");
-
   const matchIds = Object.values(KNOCKOUT_ROUNDS).flat().map(m => `"${m.id}": null`).join(", ");
+
+  const propList = P2_PROPS.map(p => `"${p.id}": null  // ${p.q} — true=YES happened, false=NO, null=unresolved`).join("\n");
+
   const prompt = `Search the web for 2026 FIFA World Cup knockout stage results (starting June 28 2026).
 
 Return ONLY valid JSON, no markdown:
 {
   "knockoutWinners": { ${matchIds} },
+  "p2PropResults": {
+${propList}
+  },
+  "goldenBootWinner": null,
   "lastUpdated": "ISO timestamp"
 }
 
-Set each match id to the winning team name (exact spelling) or null if not yet played.
+Rules:
+- knockoutWinners: set each match id to the winning team name (exact spelling from the tournament) or null if not yet played.
+- p2PropResults: set each prop id to true (YES happened), false (NO happened), or null (round not complete yet).
+  Only settle a prop if the relevant round is fully complete.
+  R32 props (p2_r32_*): settle after all 16 R32 matches played.
+  R16 props (p2_r16_*): settle after all 8 R16 matches played.
+  QF props (p2_qf_*): settle after all 4 QF matches played.
+  SF props (p2_sf_*): settle after both SF matches played.
+  Final props (p2_final_*): settle after the Final is played.
+- goldenBootWinner: the name of the tournament top scorer once the Final is played, or null.
+
+Match list:
 ${matchList}
 
 Return ONLY the JSON.`;
@@ -500,7 +600,7 @@ Return ONLY the JSON.`;
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1500,
+      max_tokens: 2000,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: prompt }],
     }),
@@ -511,7 +611,138 @@ Return ONLY the JSON.`;
   const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
   if (s === -1) return null;
   const parsed = JSON.parse(cleaned.slice(s, e + 1));
-  return parsed.knockoutWinners || null;
+  return {
+    knockoutWinners: parsed.knockoutWinners || null,
+    p2PropResults: parsed.p2PropResults || null,
+    goldenBootWinner: parsed.goldenBootWinner || null,
+  };
+}
+
+// ── FETCH BRACKET SLOTS (one-time after group stage ends) ─────────────────────
+// Resolves A1/A2/B1/etc. placeholders to actual team names from group results
+// Persists to Firebase pool.bracketSlots — never re-fetches if already set
+async function fetchBracketSlots() {
+  const slotList = Object.values(KNOCKOUT_ROUNDS.r32).map(m =>
+    `"${m.slotA}": null, "${m.slotB}": null`
+  ).join(", ");
+
+  const prompt = `Search the web for the 2026 FIFA World Cup group stage final standings (all 12 groups A–L, June 11–27 2026).
+
+Based on the final group standings, resolve these bracket slots to actual team names:
+- "1X" = 1st place team in Group X
+- "2X" = 2nd place team in Group X
+- "3ABC" = best 3rd-place team from Groups A, B, C (by FIFA criteria)
+- "3DEF" = best 3rd-place team from Groups D, E, F
+- "3GHI" = best 3rd-place team from Groups G, H, I
+- "3JKL" = best 3rd-place team from Groups J, K, L
+- "3ABCD" = best 3rd-place team from Groups A, B, C, D
+- "3EFGH" = best 3rd-place team from Groups E, F, G, H
+- "3IJKL" = best 3rd-place team from Groups I, J, K, L
+- "3best" = overall best 3rd-place team not already included
+
+Return ONLY valid JSON, no markdown:
+{
+  "slots": {
+    "1A": "team name or null",
+    "2A": "team name or null",
+    "1B": "team name or null",
+    "2B": "team name or null",
+    "1C": "team name or null",
+    "2C": "team name or null",
+    "1D": "team name or null",
+    "2D": "team name or null",
+    "1E": "team name or null",
+    "2E": "team name or null",
+    "1F": "team name or null",
+    "2F": "team name or null",
+    "1G": "team name or null",
+    "2G": "team name or null",
+    "1H": "team name or null",
+    "2H": "team name or null",
+    "1I": "team name or null",
+    "2I": "team name or null",
+    "1J": "team name or null",
+    "2J": "team name or null",
+    "1K": "team name or null",
+    "2K": "team name or null",
+    "1L": "team name or null",
+    "2L": "team name or null",
+    "3ABC": "team name or null",
+    "3DEF": "team name or null",
+    "3GHI": "team name or null",
+    "3JKL": "team name or null",
+    "3ABCD": "team name or null",
+    "3EFGH": "team name or null",
+    "3IJKL": "team name or null",
+    "3best": "team name or null"
+  }
+}
+
+Use exact team names from the tournament. Return null for any slot where the group hasn't finished.
+Return ONLY the JSON.`;
+
+  const res = await fetch("/api/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
+  if (s === -1) return null;
+  const parsed = JSON.parse(cleaned.slice(s, e + 1));
+  return parsed.slots || null;
+}
+
+// ── FETCH GOLDEN BOOT OPTIONS (one-time after group stage ends) ───────────────
+// Gets top 3 group-stage scorers + sets weighted point values
+// Persists to Firebase pool.goldenBoot — never re-fetches if already set
+async function fetchGoldenBootOptions() {
+  const prompt = `Search the web for the 2026 FIFA World Cup group stage top scorers (June 11–27 2026).
+
+Find the top 3 players by goals scored in the group stage (not counting penalty shootout goals).
+Then assign point values for a betting pool Golden Boot prop (max 20 pts for "Other"):
+- The player most likely to win the Golden Boot (highest goals, best team progression) gets the lowest points (bigger favorite = lower payout).
+- Weight the points based on the gap between scorers — if one player is far ahead, they're a heavy favorite and should pay much less.
+- Points must be whole numbers between 5 and 18.
+- "Other" always pays 20 pts.
+
+Return ONLY valid JSON, no markdown:
+{
+  "options": [
+    { "name": "Player 1 full name", "goals": 5, "team": "Team", "pts": 6 },
+    { "name": "Player 2 full name", "goals": 4, "team": "Team", "pts": 10 },
+    { "name": "Player 3 full name", "goals": 3, "team": "Team", "pts": 15 }
+  ],
+  "reasoning": "brief explanation of weighting"
+}
+
+Return ONLY the JSON.`;
+
+  const res = await fetch("/api/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 600,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
+  if (s === -1) return null;
+  const parsed = JSON.parse(cleaned.slice(s, e + 1));
+  if (!parsed.options || parsed.options.length < 3) return null;
+  return { options: parsed.options.slice(0, 3), answer: null };
 }
 
 // ── MATCH TICKER (live + upcoming) ───────────────────────────────────────────
@@ -1010,11 +1241,17 @@ export default function WorldCupPool() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError]       = useState("");
 
-  const [predTab, setPredTab]             = useState("groups");
+  const [picksPhase, setPicksPhase]       = useState("p1"); // "p1" | "p2"
+  const [predTab, setPredTab]             = useState("groups"); // p1 sub-tab
+  const [p2Tab, setP2Tab]                 = useState("bracket"); // p2 sub-tab
   const [selGroup, setSelGroup]           = useState("A");
   const [selPropIdx, setSelPropIdx]       = useState(0);
   const [groupRankings, setGroupRankings] = useState({});
   const [propPicks, setPropPicks]         = useState(Array(34).fill(null));
+  const [p2PropPicks, setP2PropPicks]     = useState({}); // { [prop.id]: true|false }
+  const [goldenBootPick, setGoldenBootPick] = useState(null);
+  const [goldenBoot, setGoldenBoot]       = useState(null); // loaded from Firebase
+  const [liveP2Props, setLiveP2Props]     = useState(null);
   const [saved, setSaved]                 = useState(false);
   const [saving, setSaving]               = useState(false);
   const [viewingPlayer, setViewingPlayer] = useState(null);
@@ -1031,6 +1268,7 @@ export default function WorldCupPool() {
 
   const [liveResults, setLiveResults]     = useState(null);
   const [livePhase2, setLivePhase2]       = useState(null);
+  const [bracketSlots, setBracketSlots]   = useState(null); // { "1A": "Mexico", "2A": "South Africa", ... }
   const [fetchStatus, setFetchStatus]     = useState("idle");
   const [fetchError, setFetchError]       = useState("");
   const [lastFetched, setLastFetched]     = useState(null);
@@ -1059,6 +1297,9 @@ export default function WorldCupPool() {
         setPlayers(data.players);
         setPredictions(data.predictions);
         setPaid(data.paid || {});
+        if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
+        if (data.bracketSlots) setBracketSlots(data.bracketSlots);
+        if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
         const def = { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] };
         const s = data.settings || def;
         setSettings(s);
@@ -1083,6 +1324,8 @@ export default function WorldCupPool() {
                 setGroupRankings(sanitizeGroupRankings(e.groupRankings));
                 setPropPicks(e.propPicks || Array(34).fill(null));
                 setPhase2Picks(e.phase2Picks || {});
+                setP2PropPicks(e.p2PropPicks || {});
+                setGoldenBootPick(e.goldenBootPick || null);
                 setTbP1(e.tbP1 !== undefined ? String(e.tbP1) : "");
                 setTbP2(e.tbP2 !== undefined ? String(e.tbP2) : "");
                 setScreen("predict");
@@ -1105,7 +1348,13 @@ export default function WorldCupPool() {
   // Poll Firebase every 30s
   useEffect(() => {
     const iv = setInterval(() => {
-      dbLoad().then(data => { setPlayers(data.players); setPredictions(data.predictions); setPaid(data.paid || {}); setSettings(data.settings || { entryFee:25, commCut:20, p1Split:50, payouts1:[60,25,10,5,0], payouts2:[60,25,10,5,0] }); }).catch(() => {});
+      dbLoad().then(data => {
+        setPlayers(data.players); setPredictions(data.predictions); setPaid(data.paid || {});
+        setSettings(data.settings || { entryFee:25, commCut:20, p1Split:50, payouts1:[60,25,10,5,0], payouts2:[60,25,10,5,0] });
+        if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
+        if (data.bracketSlots) setBracketSlots(data.bracketSlots);
+        if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+      }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
     }, 30000);
@@ -1115,6 +1364,7 @@ export default function WorldCupPool() {
   const refreshScores = useCallback(async () => {
     setFetchStatus("loading"); setFetchError("");
     try {
+      // ── P1: group stage results + daily props ──
       const r = await fetchLiveResults();
       // Detect newly settled props → trigger confetti if current player won
       if (prevPropResults && currentPlayer && !isAdmin) {
@@ -1130,12 +1380,53 @@ export default function WorldCupPool() {
       }
       setPrevPropResults(r.propResults || []);
       setLiveResults(r); setLastFetched(new Date()); setFetchStatus("done");
+
+      // ── P2: only after group stage opens ──
       if (isPhase2Open()) {
-        const p2 = await fetchLivePhase2();
-        if (p2) setLivePhase2(p2);
+        // 1. Bracket slots — fetch once, persist to Firebase, never re-fetch
+        if (!bracketSlots) {
+          try {
+            const slots = await fetchBracketSlots();
+            if (slots && Object.values(slots).some(v => v !== null)) {
+              setBracketSlots(slots);
+              await dbPatch("bracketSlots", slots);
+            }
+          } catch {}
+        }
+
+        // 2. Golden Boot options — fetch once after group stage, persist, never re-fetch
+        if (!goldenBoot?.options) {
+          try {
+            const gb = await fetchGoldenBootOptions();
+            if (gb?.options?.length >= 3) {
+              setGoldenBoot(gb);
+              await dbPatch("goldenBoot", gb);
+            }
+          } catch {}
+        }
+
+        // 3. Knockout results + P2 props + golden boot winner
+        try {
+          const p2 = await fetchLivePhase2();
+          if (p2) {
+            if (p2.knockoutWinners) setLivePhase2(p2.knockoutWinners);
+
+            if (p2.p2PropResults) {
+              setLiveP2Props(p2.p2PropResults);
+              await dbPatch("liveP2Props", p2.p2PropResults);
+            }
+
+            // Update golden boot winner once known
+            if (p2.goldenBootWinner && goldenBoot && !goldenBoot.answer) {
+              const updatedGb = { ...goldenBoot, answer: p2.goldenBootWinner };
+              setGoldenBoot(updatedGb);
+              await dbPatch("goldenBoot", updatedGb);
+            }
+          }
+        } catch {}
       }
     } catch (e) { setFetchError(e.message); setFetchStatus("error"); }
-  }, [prevPropResults, currentPlayer, predictions, isAdmin]);
+  }, [prevPropResults, currentPlayer, predictions, isAdmin, bracketSlots, goldenBoot]);
 
   useEffect(() => { refreshScores(); }, []);
 
@@ -1169,7 +1460,7 @@ export default function WorldCupPool() {
     setIsAdmin(false);
     try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     setNewName(""); setNewPassword("");
-    setGroupRankings({}); setPropPicks(Array(34).fill(null)); setPhase2Picks({}); setTbP1(""); setTbP2("");
+    setGroupRankings({}); setPropPicks(Array(34).fill(null)); setPhase2Picks({}); setP2PropPicks({}); setGoldenBootPick(null); setTbP1(""); setTbP2("");
     setScreen("predict");
   }
 
@@ -1197,6 +1488,8 @@ export default function WorldCupPool() {
     setGroupRankings(sanitizeGroupRankings(e.groupRankings));
     setPropPicks(e.propPicks || Array(34).fill(null));
     setPhase2Picks(e.phase2Picks || {});
+    setP2PropPicks(e.p2PropPicks || {});
+    setGoldenBootPick(e.goldenBootPick || null);
     setTbP1(e.tbP1 !== undefined ? String(e.tbP1) : "");
     setTbP2(e.tbP2 !== undefined ? String(e.tbP2) : "");
     setSaved(false);
@@ -1221,9 +1514,9 @@ export default function WorldCupPool() {
     setSaving(true);
     const tbP1val = tbP1 !== "" ? parseInt(tbP1) : null;
     const tbP2val = tbP2 !== "" ? parseInt(tbP2) : null;
-    const np = { ...predictions, [currentPlayer.id]: { groupRankings, propPicks, phase2Picks, tbP1: tbP1val, tbP2: tbP2val } };
+    const np = { ...predictions, [currentPlayer.id]: { groupRankings, propPicks, phase2Picks, p2PropPicks, goldenBootPick, tbP1: tbP1val, tbP2: tbP2val } };
     setPredictions(np);
-    await dbSave(players, np, paid, settings);
+    await dbSave(players, np, paid, settings, goldenBoot);
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
 
@@ -1240,7 +1533,12 @@ export default function WorldCupPool() {
   const propsDone  = propPicks.filter(p => p !== null).length;
 
   const leaderboard = players
-    .map(p => ({ ...p, pts: calcPoints(predictions[p.id], liveResults, livePhase2), hasPred: !!predictions[p.id] }))
+    .map(p => ({
+      ...p,
+      pts: calcPoints(predictions[p.id], liveResults),
+      pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, livePhase2, liveP2Props, goldenBoot),
+      hasPred: !!predictions[p.id]
+    }))
     .sort((a, b) => b.pts - a.pts);
 
   // selPropIdx retained for potential future use
@@ -1479,9 +1777,10 @@ export default function WorldCupPool() {
 
               {/* Phase 2 */}
               <div style={{ ...S.card, marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 PHASE 2 — KNOCKOUT BRACKET</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Pick the winner of every knockout match (R32 → Final). Points scale up with each round — getting the Final right is worth a lot.</div>
-                <div style={{ display:"flex", flexDirection:"column", gap:5, fontSize:12 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 PHASE 2 — KNOCKOUT STAGE</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Opens Jun 27 evening. Bracket picks lock Jun 28 at noon ET.</div>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Bracket — pick every match winner:</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:5, fontSize:12, marginBottom:12 }}>
                   {[["Round of 32","2 pts"],["Round of 16","4 pts"],["Quarter-Finals","8 pts"],["Semi-Finals","16 pts"],["Final","32 pts"]].map(([r,p]) => (
                     <div key={r} style={{ display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(255,255,255,0.05)", padding:"3px 0" }}>
                       <span style={{ color:"#c8b8a0" }}>{r}</span>
@@ -1489,7 +1788,10 @@ export default function WorldCupPool() {
                     </div>
                   ))}
                 </div>
-                <div style={{ fontSize:11, color:"#aab0ff", marginTop:8 }}>🔜 Phase 2 props coming soon — extra picks for the knockout stage.</div>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Props — 15 YES/NO questions, 3 per round:</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6, lineHeight:1.5 }}>Each round's props lock at that round's first kickoff. Same weighted odds system as Phase 1 — each prop sums to 10pts.</div>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Golden Boot — who will be top scorer?</div>
+                <div style={{ fontSize:12, color:"#f0e6c8", lineHeight:1.5 }}>Pick from the top 3 group-stage scorers + "Other". Locks Jun 28 at noon ET. Worth up to 20pts.</div>
               </div>
 
               {/* Tiebreakers */}
@@ -1502,7 +1804,12 @@ export default function WorldCupPool() {
               {/* Lock times */}
               <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
-                {[["🏅 Group rankings + all Day 1 props","Jun 11 at noon PT — tournament kickoff (Mexico vs South Africa)"],["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],["🏆 Bracket picks","Jun 28 at 9am PT — right after the group stage ends"]].map(([l,v]) => (
+                {[
+                  ["🏅 Group rankings + Day 1 props","Jun 11 at noon PT — tournament kickoff (Mexico vs South Africa)"],
+                  ["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],
+                  ["🏆 Bracket picks + Golden Boot","Jun 28 at noon ET — right after the group stage ends"],
+                  ["🎲 P2 props (R16–Final)","Each round's 3 props lock at that round's first kickoff"],
+                ].map(([l,v]) => (
                   <div key={l} style={{ fontSize:12, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
                     <div style={{ color:"#ff9090", fontWeight:"bold", marginBottom:2 }}>{l}</div>
                     <div style={{ color:"#9ab8a0" }}>{v}</div>
@@ -1774,24 +2081,42 @@ export default function WorldCupPool() {
               </div>
             </div>
 
-            {/* Progress */}
             <div style={{ marginBottom:14 }}>
               <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#9ab8a0", marginBottom:4 }}>
-                <span>Progress</span><span>{groupsDone + propsDone} / 46 picks</span>
+                <span>Phase 1 Progress</span><span>{groupsDone}/12 groups · {propsDone}/34 props</span>
               </div>
               <div style={{ height:5, background:"rgba(255,255,255,0.08)", borderRadius:3, overflow:"hidden" }}>
                 <div style={{ height:"100%", width:`${((groupsDone+propsDone)/46)*100}%`, background:"linear-gradient(90deg,#c8a84b,#f0d060)", borderRadius:3, transition:"width 0.3s" }} />
               </div>
             </div>
 
-            <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
-              {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/34)`],["tb1",`🔢 Tiebreaker${tbP1?"  ✓":""}`], ...(isPhase2Open() ? [["phase2","🏆 Knockouts"]] : [])].map(([t,l]) => (
-                <button key={t} style={S.tab(predTab===t)} onClick={() => setPredTab(t)}>{l}</button>
+            {/* Phase tabs */}
+            <div style={{ display:"flex", gap:4, marginBottom:12 }}>
+              {[["p1","🏅 Phase 1"],["p2","🏆 Phase 2"]].map(([ph, label]) => (
+                <button key={ph} style={{ ...S.tab(picksPhase===ph), flex:1, fontSize:13 }} onClick={() => setPicksPhase(ph)}>{label}</button>
               ))}
             </div>
 
+            {/* ── PHASE 1 SUB-TABS ── */}
+            {picksPhase==="p1" && (
+              <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
+                {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/34)`],["tb1",`🔢 Tiebreaker${tbP1?" ✓":""}`]].map(([t,l]) => (
+                  <button key={t} style={S.tab(predTab===t)} onClick={() => setPredTab(t)}>{l}</button>
+                ))}
+              </div>
+            )}
+
+            {/* ── PHASE 2 SUB-TABS ── */}
+            {picksPhase==="p2" && (
+              <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
+                {[["bracket","🏆 Bracket"],["props","🎲 Props"],["tb2",`🔢 Tiebreaker${tbP2?" ✓":""}`]].map(([t,l]) => (
+                  <button key={t} style={S.tab(p2Tab===t)} onClick={() => setP2Tab(t)}>{l}</button>
+                ))}
+              </div>
+            )}
+
             {/* GROUP RANKINGS */}
-            {predTab==="groups" && (
+            {picksPhase==="p1" && predTab==="groups" && (
               <div>
                 <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
                   Predict the final standings of each group. Drag or use ▲▼.<br/>
@@ -1827,7 +2152,7 @@ export default function WorldCupPool() {
             )}
 
             {/* DAILY PROPS */}
-            {predTab==="props" && (() => {
+            {picksPhase==="p1" && predTab==="props" && (() => {
               // Group props by date for display
               const propsByDate = [];
               let currentDate = null;
@@ -1909,7 +2234,7 @@ export default function WorldCupPool() {
             })()}
 
             {/* PHASE 1 TIEBREAKER TAB */}
-            {predTab==="tb1" && (
+            {picksPhase==="p1" && predTab==="tb1" && (
               <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 1 TIEBREAKER</div>
                 <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>Used only to break ties in Phase 1 standings. Doesn't affect your score directly.</div>
@@ -1939,20 +2264,26 @@ export default function WorldCupPool() {
               </div>
             )}
 
-            {/* PHASE 2 KNOCKOUTS */}
-            {predTab==="phase2" && (
+            {/* PHASE 2 — BRACKET */}
+            {picksPhase==="p2" && p2Tab==="bracket" && (
               <div>
-                {isPhase2Locked() ? (
+                {!isPhase2Open() && (
+                  <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
+                    <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Bracket picks open Jun 27 evening</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Preview the bracket below — picks lock Jun 28 at noon ET</div>
+                  </div>
+                )}
+                {isPhase2Locked() && (
                   <div style={{ background:"rgba(200,60,60,0.15)", border:"1px solid rgba(200,60,60,0.3)", borderRadius:8, padding:"8px 12px", marginBottom:12, fontSize:12, color:"#ff9090" }}>
                     🔒 Knockout picks are locked
                   </div>
-                ) : (
+                )}
+                {isPhase2Open() && !isPhase2Locked() && (
                   <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
-                    Pick the winner of every knockout match. Locks Jun 28 at 9am PT.<br/>
+                    Pick the winner of every knockout match. Locks Jun 28 at noon ET.<br/>
                     <span style={{ color:"#f0d060" }}>+2</span> R32 · <span style={{ color:"#f0d060" }}>+4</span> R16 · <span style={{ color:"#f0d060" }}>+8</span> QF · <span style={{ color:"#f0d060" }}>+16</span> SF · <span style={{ color:"#f0d060" }}>+32</span> Final
                   </div>
                 )}
-
                 {/* Round tabs */}
                 <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginBottom:14 }}>
                   {Object.entries(ROUND_LABELS).map(([round, label]) => {
@@ -1965,21 +2296,18 @@ export default function WorldCupPool() {
                     );
                   })}
                 </div>
-
-                {/* Matches for selected round */}
                 {(KNOCKOUT_ROUNDS[phase2Tab]||[]).map(match => {
                   const pick = phase2Picks[match.id];
                   const actual = livePhase2?.[match.id];
                   const won = actual && pick === actual;
                   const lost = actual && pick && pick !== actual;
                   const pts = ROUND_PTS[phase2Tab];
-
-                  // For R32 we show slot labels since teams aren't known yet
-                  // For later rounds we show previous round winners
-                  const teamA = match.slotA;
-                  const teamB = match.slotB;
-                  const isKnownTeam = (slot) => Object.values(TEAMS_BY_GROUP).flat().includes(slot);
-
+                  // Resolve slot to actual team name if available
+                  const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
+                  const teamA = resolveSlot(match.slotA);
+                  const teamB = resolveSlot(match.slotB);
+                  const isKnownTeam = (name) => Object.values(TEAMS_BY_GROUP).flat().includes(name);
+                  const isResolved = (slot) => bracketSlots?.[slot] != null;
                   return (
                     <div key={match.id} style={{ ...S.card, marginBottom:8, borderColor: won?"rgba(100,255,150,0.3)":lost?"rgba(255,100,100,0.2)":"rgba(200,168,75,0.2)" }}>
                       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8, fontSize:11 }}>
@@ -1992,52 +2320,187 @@ export default function WorldCupPool() {
                         </div>
                       )}
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                        {[teamA, teamB].map(team => (
-                          <button key={team} onClick={() => {
-                            if (isPhase2Locked()) return;
+                        {[[match.slotA, teamA], [match.slotB, teamB]].map(([slot, team]) => (
+                          <button key={slot} onClick={() => {
+                            if (isPhase2Locked() || !isPhase2Open()) return;
                             setPhase2Picks(prev => ({ ...prev, [match.id]: team }));
                           }} style={{
                             padding:"10px 6px", borderRadius:8, border:"2px solid",
                             borderColor: pick===team?"#f0d060":"rgba(255,255,255,0.1)",
                             background: pick===team?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
                             color: pick===team?"#f0d060":"#c8b8a0",
-                            cursor: isPhase2Locked()?"default":"pointer", fontSize:11, textAlign:"center",
-                            opacity: isPhase2Locked() && pick!==team ? 0.5 : 1,
+                            cursor: (isPhase2Locked()||!isPhase2Open())?"default":"pointer", fontSize:11, textAlign:"center",
+                            opacity: (isPhase2Locked()||!isPhase2Open()) && pick!==team ? 0.5 : 1,
                           }}>
                             {isKnownTeam(team) && <div style={{ marginBottom:4 }}>{tf(team)}</div>}
                             <div style={{ fontWeight: pick===team?"bold":"normal" }}>{team}</div>
+                            {!isResolved(slot) && <div style={{ fontSize:9, color:"#9ab8a0", marginTop:2 }}>TBD</div>}
                           </button>
                         ))}
                       </div>
                     </div>
                   );
                 })}
-              {/* Phase 2 Tiebreaker — shown when on Final round */}
-              {phase2Tab === "final" && (
-                <div style={{ ...S.card, marginTop:8, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
-                  <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 2 TIEBREAKER</div>
-                  <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P2.question}</div>
-                  <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, lineHeight:1.5 }}>{TIEBREAKER_P2.hint}</div>
-                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-                    {TIEBREAKER_P2.references.map(r => (
-                      <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"5px 10px", fontSize:11 }}>
-                        <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.matchup}</span> <span style={{ color:"#9ab8a0" }}>· {r.minute}'</span>
-                      </div>
-                    ))}
+              </div>
+            )}
+
+            {/* PHASE 2 — PROPS */}
+            {picksPhase==="p2" && p2Tab==="props" && (
+              <div>
+                {!isPhase2Open() && (
+                  <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
+                    <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Phase 2 props open Jun 27 evening</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Preview the props below — each round locks at its first kickoff</div>
                   </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <input type="number" min="1" max="120" value={tbP2}
-                      onChange={e => setTbP2(e.target.value)}
-                      placeholder="Your guess…"
-                      style={{ ...S.input, width:120, fontSize:16, textAlign:"center" }}
-                      disabled={isPhase2Locked()}
-                    />
-                    <span style={{ fontSize:12, color:"#9ab8a0" }}>minute</span>
-                    {tbP2 && <span style={{ fontSize:12, color:"#f0d060" }}>✓ {tbP2}'</span>}
-                  </div>
-                  {isPhase2Locked() && <div style={{ fontSize:11, color:"#ff9090", marginTop:6 }}>🔒 Locked</div>}
+                )}
+                <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:14 }}>
+                  15 knockout props across 5 rounds. Each round's props lock at that round's first kickoff.<br/>
+                  Points are weighted — the less likely outcome pays more.
                 </div>
-              )}
+                {Object.entries(ROUND_LABELS).map(([round, roundLabel]) => {
+                  const roundProps = P2_PROPS.filter(p => p.round === round);
+                  const locked = isP2PropRoundLocked(round);
+                  const open = isPhase2Open();
+                  return (
+                    <div key={round} style={{ marginBottom:20 }}>
+                      <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:10, paddingBottom:4, borderBottom:"1px solid rgba(200,168,75,0.2)", display:"flex", justifyContent:"space-between" }}>
+                        <span>{roundLabel.toUpperCase()}</span>
+                        {locked ? <span style={{ color:"#ff9090" }}>🔒 Locked</span> : !open ? <span style={{ color:"#aab0ff" }}>🔜 Opens Jun 27</span> : <span style={{ color:"#9ab8a0" }}>Open</span>}
+                      </div>
+                      {roundProps.map(prop => {
+                        const pick = p2PropPicks[prop.id];
+                        const actual = liveP2Props?.[prop.id];
+                        const settled = actual !== null && actual !== undefined;
+                        const won = settled && pick === actual;
+                        const lost = settled && pick !== null && pick !== undefined && !won;
+                        return (
+                          <div key={prop.id} style={{ ...S.card, marginBottom:10, borderColor: won?"rgba(100,255,150,0.4)":lost?"rgba(255,100,100,0.3)":"rgba(200,168,75,0.2)" }}>
+                            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                              <span style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", flex:1, marginRight:8 }}>{roundLabel}</span>
+                              <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                                <span style={{ fontSize:10, background:"rgba(0,180,80,0.15)", color:"#8fffb0", borderRadius:4, padding:"2px 6px" }}>YES {prop.ptsYes}pts</span>
+                                <span style={{ fontSize:10, background:"rgba(180,50,50,0.15)", color:"#ff9090", borderRadius:4, padding:"2px 6px" }}>NO {prop.ptsNo}pts</span>
+                                {locked && <span style={{ fontSize:10, color:"#ff9090" }}>🔒</span>}
+                              </div>
+                            </div>
+                            <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:10, lineHeight:1.5 }}>{prop.q}</div>
+                            {settled && (
+                              <div style={{ fontSize:12, marginBottom:10, padding:"6px 10px", borderRadius:6, background:actual?"rgba(0,180,80,0.15)":"rgba(180,50,50,0.15)", color:actual?"#8fffb0":"#ff9090" }}>
+                                Result: {actual ? `✅ YES — ${prop.yes}` : `❌ NO — ${prop.no}`}
+                                {won ? " 🎉 You got it!" : lost ? " 😬 Unlucky" : ""}
+                              </div>
+                            )}
+                            {locked && !settled && (
+                              <div style={{ background:"rgba(200,60,60,0.15)", border:"1px solid rgba(200,60,60,0.3)", borderRadius:8, padding:"6px 10px", marginBottom:8, fontSize:11, color:"#ff9090" }}>
+                                🔒 Locked
+                              </div>
+                            )}
+                            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                              {[[true,"✅",prop.yes,prop.ptsYes],[false,"❌",prop.no,prop.ptsNo]].map(([val,icon,label,pts]) => (
+                                <button key={String(val)}
+                                  onClick={() => {
+                                    if (locked || !open) return;
+                                    setP2PropPicks(prev => ({ ...prev, [prop.id]: val }));
+                                  }}
+                                  style={{
+                                    padding:"12px 8px", borderRadius:10, border:"2px solid",
+                                    borderColor: pick===val?"#f0d060":"rgba(255,255,255,0.1)",
+                                    background: pick===val?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
+                                    color: pick===val?"#f0d060":"#c8b8a0",
+                                    cursor: (locked||!open)?"default":"pointer", fontSize:12, textAlign:"center", lineHeight:1.4,
+                                    opacity: (locked||!open) && pick!==val ? 0.4 : 1,
+                                  }}>
+                                  <div style={{ fontSize:18, marginBottom:3 }}>{icon}</div>
+                                  <div style={{ fontWeight:pick===val?"bold":"normal", marginBottom:3 }}>{label}</div>
+                                  <div style={{ fontSize:10, color:pick===val?"#f0d060":"#9ab8a0" }}>+{pts} pts</div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+
+                {/* Golden Boot */}
+                <div style={{ marginBottom:20 }}>
+                  <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:10, paddingBottom:4, borderBottom:"1px solid rgba(200,168,75,0.2)", display:"flex", justifyContent:"space-between" }}>
+                    <span>🥇 GOLDEN BOOT</span>
+                    {isGoldenBootLocked() ? <span style={{ color:"#ff9090" }}>🔒 Locked</span> : !isPhase2Open() ? <span style={{ color:"#aab0ff" }}>🔜 Opens Jun 27</span> : <span style={{ color:"#9ab8a0" }}>Locks Jun 28 noon ET</span>}
+                  </div>
+                  <div style={{ ...S.card, borderColor:"rgba(200,168,75,0.3)" }}>
+                    <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:6 }}>Who will win the Golden Boot (tournament top scorer)?</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, lineHeight:1.5 }}>
+                      Top 3 group-stage scorers are shown after the group stage ends. Points weighted by likelihood — the favorite pays least, "Other" pays most (max 20pts).
+                    </div>
+                    {!goldenBoot?.options ? (
+                      <div style={{ fontSize:12, color:"#aab0ff", padding:"12px 0", textAlign:"center" }}>
+                        🔜 Options revealed after group stage ends (Jun 27)
+                      </div>
+                    ) : (
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {[...goldenBoot.options, { name:"Other", pts: 20 }].map(opt => {
+                          const isPick = goldenBootPick === opt.name;
+                          const isAnswer = goldenBoot.answer === opt.name;
+                          const won = isAnswer && isPick;
+                          const lost = goldenBoot.answer && isPick && !won;
+                          return (
+                            <button key={opt.name} onClick={() => {
+                              if (isGoldenBootLocked() || !isPhase2Open()) return;
+                              setGoldenBootPick(opt.name);
+                            }} style={{
+                              padding:"12px 14px", borderRadius:10, border:"2px solid", textAlign:"left", cursor:(isGoldenBootLocked()||!isPhase2Open())?"default":"pointer",
+                              borderColor: won?"rgba(100,255,150,0.6)":lost?"rgba(255,100,100,0.5)":isPick?"#f0d060":"rgba(255,255,255,0.1)",
+                              background: won?"rgba(0,180,80,0.15)":lost?"rgba(180,50,50,0.1)":isPick?"rgba(200,168,75,0.2)":"rgba(255,255,255,0.04)",
+                              opacity: (isGoldenBootLocked()||!isPhase2Open()) && !isPick ? 0.5 : 1,
+                            }}>
+                              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                                <span style={{ fontSize:14, color: isPick?"#f0d060":"#f0e6c8", fontWeight: isPick?"bold":"normal" }}>
+                                  {opt.name === "Other" ? "🌍 Other" : `${FLAG[opt.name]||"🏳️"} ${opt.name}`}
+                                </span>
+                                <span style={{ fontSize:12, color:"#f0d060", fontWeight:"bold" }}>+{opt.pts} pts</span>
+                              </div>
+                              {won && <div style={{ fontSize:11, color:"#8fffb0", marginTop:4 }}>🎉 Correct! +{opt.pts} pts</div>}
+                              {lost && <div style={{ fontSize:11, color:"#ff9090", marginTop:4 }}>😬 Wrong pick</div>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PHASE 2 — TIEBREAKER */}
+            {picksPhase==="p2" && p2Tab==="tb2" && (
+              <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.4)", background:"rgba(255,140,0,0.06)" }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6, letterSpacing:1 }}>🔢 PHASE 2 TIEBREAKER</div>
+                <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:12 }}>Used only to break ties in Phase 2 standings. Doesn't affect your score directly.</div>
+                <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:8 }}>{TIEBREAKER_P2.question}</div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, lineHeight:1.5 }}>{TIEBREAKER_P2.hint}</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+                  {TIEBREAKER_P2.references.map(r => (
+                    <div key={r.year} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"5px 10px", fontSize:11 }}>
+                      <span style={{ color:"#f0d060" }}>{r.year}:</span> <span style={{ color:"#f0e6c8" }}>{r.matchup}</span> <span style={{ color:"#9ab8a0" }}>· {r.minute}'</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <input type="number" min="1" max="120" value={tbP2}
+                    onChange={e => setTbP2(e.target.value)}
+                    placeholder="Your guess…"
+                    style={{ ...S.input, width:130, fontSize:20, textAlign:"center", padding:"10px" }}
+                    disabled={isPhase2Locked()}
+                  />
+                  <span style={{ fontSize:13, color:"#9ab8a0" }}>minute</span>
+                  {tbP2 && <span style={{ fontSize:13, color:"#f0d060", fontWeight:"bold" }}>✓ {tbP2}'</span>}
+                </div>
+                {isPhase2Locked()
+                  ? <div style={{ fontSize:11, color:"#ff9090", marginTop:10 }}>🔒 Locked</div>
+                  : <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10 }}>Locks Jun 28 at noon ET with bracket picks</div>
+                }
               </div>
             )}
 
@@ -2120,6 +2583,109 @@ export default function WorldCupPool() {
                   </div>
                 );
               })()}
+            </div>
+
+            {/* P2 Auto-fetch status + overrides */}
+            <div style={S.card}>
+              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>⚙️ PHASE 2 — AUTO-FETCH STATUS & OVERRIDES</div>
+
+              {/* Bracket slots */}
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6 }}>
+                  🏟️ Bracket Slots {bracketSlots ? <span style={{ color:"#8fffb0" }}>✓ Fetched</span> : <span style={{ color:"#aab0ff" }}>⏳ Pending (auto-fetches after group stage ends)</span>}
+                </div>
+                {bracketSlots && (
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
+                    {Object.entries(bracketSlots).map(([slot, team]) => (
+                      <div key={slot} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"3px 8px", fontSize:10 }}>
+                        <span style={{ color:"#f0d060" }}>{slot}:</span> <span style={{ color: team?"#f0e6c8":"#555" }}>{team||"null"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={async () => {
+                    setFetchStatus("loading");
+                    try {
+                      const slots = await fetchBracketSlots();
+                      if (slots) { setBracketSlots(slots); await dbPatch("bracketSlots", slots); }
+                      setFetchStatus("done");
+                    } catch(e) { setFetchStatus("error"); }
+                  }} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>🔄 Re-fetch Slots</button>
+                  <button onClick={async () => {
+                    const raw = window.prompt("Paste bracket slots JSON ({\"1A\":\"Mexico\",...}):");
+                    if (!raw) return;
+                    try {
+                      const slots = JSON.parse(raw);
+                      setBracketSlots(slots); await dbPatch("bracketSlots", slots);
+                      alert("✅ Bracket slots updated");
+                    } catch { alert("❌ Invalid JSON"); }
+                  }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 12px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✏️ Manual Override</button>
+                </div>
+              </div>
+
+              {/* Golden Boot */}
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6 }}>
+                  🥇 Golden Boot Options {goldenBoot?.options ? <span style={{ color:"#8fffb0" }}>✓ Fetched</span> : <span style={{ color:"#aab0ff" }}>⏳ Pending</span>}
+                  {goldenBoot?.answer && <span style={{ color:"#8fffb0", marginLeft:8 }}>· Winner: {goldenBoot.answer}</span>}
+                </div>
+                {goldenBoot?.options && (
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+                    {[...goldenBoot.options, { name:"Other", pts:20 }].map(o => (
+                      <div key={o.name} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"3px 8px", fontSize:10 }}>
+                        <span style={{ color:"#f0e6c8" }}>{o.name}</span> <span style={{ color:"#f0d060" }}>{o.pts}pts</span>
+                        {goldenBoot.answer === o.name && <span style={{ color:"#8fffb0" }}> ✓</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <button onClick={async () => {
+                    setFetchStatus("loading");
+                    try {
+                      const gb = await fetchGoldenBootOptions();
+                      if (gb) { setGoldenBoot(gb); await dbPatch("goldenBoot", gb); }
+                      setFetchStatus("done");
+                    } catch(e) { setFetchStatus("error"); }
+                  }} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>🔄 Re-fetch Golden Boot</button>
+                  <button onClick={async () => {
+                    const raw = window.prompt("Paste golden boot JSON ({\"options\":[{\"name\":\"...\",\"pts\":6}],\"answer\":null}):");
+                    if (!raw) return;
+                    try {
+                      const gb = JSON.parse(raw);
+                      setGoldenBoot(gb); await dbPatch("goldenBoot", gb);
+                      alert("✅ Golden Boot updated");
+                    } catch { alert("❌ Invalid JSON"); }
+                  }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 12px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✏️ Manual Override</button>
+                  {goldenBoot?.options && !goldenBoot?.answer && (
+                    <button onClick={async () => {
+                      const winner = window.prompt(`Set Golden Boot winner:\n${goldenBoot.options.map(o=>o.name).join(", ")}, Other`);
+                      if (!winner) return;
+                      const updated = { ...goldenBoot, answer: winner };
+                      setGoldenBoot(updated); await dbPatch("goldenBoot", updated);
+                    }} style={{ background:"rgba(100,200,100,0.2)", border:"1px solid rgba(100,200,100,0.4)", borderRadius:6, padding:"5px 12px", color:"#8fffb0", cursor:"pointer", fontSize:11 }}>🏆 Set Winner</button>
+                  )}
+                </div>
+              </div>
+
+              {/* P2 Props manual override */}
+              <div>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6 }}>
+                  🎲 P2 Prop Results {liveP2Props ? <span style={{ color:"#8fffb0" }}>✓ {Object.values(liveP2Props).filter(v=>v!==null).length}/{P2_PROPS.length} settled</span> : <span style={{ color:"#aab0ff" }}>⏳ Pending</span>}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={async () => {
+                    const raw = window.prompt("Paste P2 prop results JSON ({\"p2_r32_a\":true,\"p2_r32_b\":false,...}):");
+                    if (!raw) return;
+                    try {
+                      const results = JSON.parse(raw);
+                      setLiveP2Props(results); await dbPatch("liveP2Props", results);
+                      alert("✅ P2 props updated");
+                    } catch { alert("❌ Invalid JSON"); }
+                  }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 12px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✏️ Override P2 Props</button>
+                </div>
+              </div>
             </div>
 
             {/* Players + payment tracking */}
@@ -2278,7 +2844,7 @@ export default function WorldCupPool() {
 
             {/* Sub-tabs */}
             <div style={{ display:"flex", gap:4, marginBottom:14 }}>
-              {[["standings","🏅 Standings"],["chart","📈 Chart"],["h2h","⚔️ H2H"]].map(([t,l]) => (
+              {[["standings","🏅 Standings"],["chart","📈 P1 Chart"],["chart2","📈 P2 Chart"],["h2h","⚔️ H2H"]].map(([t,l]) => (
                 <button key={t} style={S.tab(lbTab===t)} onClick={() => setLbTab(t)}>{l}</button>
               ))}
             </div>
@@ -2326,6 +2892,8 @@ export default function WorldCupPool() {
                     const pred = predictions[p.id];
                     const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
                     const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
+                    const p2BracketDone = pred ? Object.keys(pred.phase2Picks||{}).filter(k => !k.startsWith("p2_") && k !== "goldenBoot").length : 0;
+                    const p2PropsDone = pred ? Object.keys(pred.p2PropPicks||{}).filter(k => pred.p2PropPicks[k] !== null).length : 0;
                     const isLastPaid = leaderboard.filter(x=>paid[x.id]).at(-1)?.id === p.id && paid[p.id];
                     return (
                       <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
@@ -2340,18 +2908,21 @@ export default function WorldCupPool() {
                             {prizes2[p.id] && prizes2[p.id] !== refund2 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P2 💰${prizes2[p.id]}</span>}
                           </div>
                           <div style={{ fontSize:10, color:"#9ab8a0" }}>
-                            {pred ? `${grpDone}/12 groups · ${prpDone}/34 props${isPhase2Open() ? ` · ${Object.keys(pred.phase2Picks||{}).length}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket` : ""}` : "No predictions yet"}
+                            P1: {grpDone}/12 groups · {prpDone}/34 props
+                            {isPhase2Open() ? ` · P2: ${p2BracketDone}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket · ${p2PropsDone}/${P2_PROPS.length} props` : ""}
                           </div>
                         </div>
-                        <div>
-                          <div style={{ fontSize:26, fontWeight:"bold", color:"#f0d060", textAlign:"right" }}>{p.pts}</div>
-                          <div style={{ fontSize:10, color:"#9ab8a0", textAlign:"right" }}>/ {MAX_PTS} pts</div>
+                        <div style={{ textAlign:"right" }}>
+                          <div style={{ fontSize:24, fontWeight:"bold", color:"#f0d060" }}>{p.pts}</div>
+                          <div style={{ fontSize:9, color:"#9ab8a0" }}>P1 / {MAX_PTS}</div>
+                          {isPhase2Open() && <div style={{ fontSize:16, fontWeight:"bold", color:"#c8a84b", marginTop:2 }}>{p.pts2}</div>}
+                          {isPhase2Open() && <div style={{ fontSize:9, color:"#9ab8a0" }}>P2 / {MAX_PHASE2_PTS}</div>}
                         </div>
                       </div>
                     );
                   })}
                   <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", marginTop:8 }}>
-                    Leaderboard syncs every 30s. Phase 2 (knockouts) unlocks after June 27. 🔜
+                    Leaderboard syncs every 30s. P1 and P2 are scored independently — separate pots, separate leaderboards at payout.
                   </div>
                 </div>
               );
@@ -2360,8 +2931,8 @@ export default function WorldCupPool() {
             {/* POINTS CHART */}
             {lbTab==="chart" && (
               <div style={S.card}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 POINTS OVER TIME</div>
-                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>Cumulative points per player as daily props settle throughout the tournament.</div>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 PHASE 1 POINTS OVER TIME</div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>Cumulative Phase 1 points per player as daily props settle throughout the group stage.</div>
                 <SparklineChart players={players} predictions={predictions} liveResults={liveResults} />
                 <div style={{ marginTop:16, borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:12 }}>
                   {leaderboard.map((p, i) => (
@@ -2372,6 +2943,34 @@ export default function WorldCupPool() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* P2 CHART */}
+            {lbTab==="chart2" && (
+              <div style={S.card}>
+                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 PHASE 2 POINTS OVER TIME</div>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>
+                  {isPhase2Open() ? "Cumulative Phase 2 points per player as knockout results come in." : "Phase 2 chart will appear once the knockout stage begins (Jun 28)."}
+                </div>
+                {isPhase2Open() ? (
+                  <>
+                    <div style={{ textAlign:"center", padding:"16px 0", color:"#9ab8a0", fontSize:13 }}>
+                      P2 chart will populate as knockout results and props settle.
+                    </div>
+                    <div style={{ marginTop:16, borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:12 }}>
+                      {[...leaderboard].sort((a,b) => b.pts2 - a.pts2).map((p, i) => (
+                        <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"5px 0" }}>
+                          <div style={{ width:10, height:10, borderRadius:"50%", background: PLAYER_COLORS[players.findIndex(pl=>pl.id===p.id) % PLAYER_COLORS.length], flexShrink:0 }} />
+                          <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {p.name}</div>
+                          <div style={{ fontSize:16, fontWeight:"bold", color:"#c8a84b" }}>{p.pts2} pts</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ textAlign:"center", padding:"24px 0", color:"#aab0ff", fontSize:13 }}>🔜 Opens Jun 28</div>
+                )}
               </div>
             )}
 
