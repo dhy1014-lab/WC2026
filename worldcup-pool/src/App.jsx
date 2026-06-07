@@ -1090,43 +1090,75 @@ function SparklineChart({ players, predictions, liveResults }) {
 }
 
 // ── HEAD-TO-HEAD MODAL ────────────────────────────────────────────────────────
-function H2HModal({ playerA, playerB, predictions, liveResults, onClose }) {
+function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, liveP2Props, goldenBoot, phase, onClose }) {
   const predA = predictions[playerA.id] || {};
   const predB = predictions[playerB.id] || {};
+
+  // ── P1 stats ──
   const propResults = liveResults?.propResults || [];
-  let agree = 0, disagree = 0, aWins = 0, bWins = 0;
+  let p1Agree = 0, p1Disagree = 0, p1AWins = 0, p1BWins = 0;
   DAILY_PROPS.forEach((_, i) => {
     const pa = predA.propPicks?.[i], pb = predB.propPicks?.[i];
     const actual = propResults[i];
     if (pa == null || pb == null) return;
-    if (pa === pb) { agree++; }
-    else {
-      disagree++;
-      if (actual != null) { if (pa === actual) aWins++; if (pb === actual) bWins++; }
-    }
+    if (pa === pb) p1Agree++;
+    else { p1Disagree++; if (actual != null) { if (pa === actual) p1AWins++; if (pb === actual) p1BWins++; } }
   });
   const ptsA = calcPoints(predA, liveResults);
   const ptsB = calcPoints(predB, liveResults);
+
+  // ── P2 stats ──
+  const allP2Matches = Object.values(KNOCKOUT_ROUNDS).flat();
+  let p2Agree = 0, p2Disagree = 0, p2AWins = 0, p2BWins = 0;
+  allP2Matches.forEach(m => {
+    const pa = predA.phase2Picks?.[m.id], pb = predB.phase2Picks?.[m.id];
+    const actual = livePhase2?.[m.id];
+    if (!pa || !pb) return;
+    if (pa === pb) p2Agree++;
+    else { p2Disagree++; if (actual) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
+  });
+  P2_PROPS.forEach(prop => {
+    const pa = predA.p2PropPicks?.[prop.id], pb = predB.p2PropPicks?.[prop.id];
+    const actual = liveP2Props?.[prop.id];
+    if (pa == null || pb == null) return;
+    if (pa === pb) p2Agree++;
+    else { p2Disagree++; if (actual != null) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
+  });
+  const pts2A = calcPhase2Points(predA.phase2Picks, livePhase2, liveP2Props, goldenBoot);
+  const pts2B = calcPhase2Points(predB.phase2Picks, livePhase2, liveP2Props, goldenBoot);
+
+  const isP1 = phase === "p1";
+  const displayPtsA = isP1 ? ptsA : pts2A;
+  const displayPtsB = isP1 ? ptsB : pts2B;
+  const agree = isP1 ? p1Agree : p2Agree;
+  const disagree = isP1 ? p1Disagree : p2Disagree;
+  const aWins = isP1 ? p1AWins : p2AWins;
+  const bWins = isP1 ? p1BWins : p2BWins;
+
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.78)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={onClose}>
       <div style={{ background:"#0d2040", border:"1px solid rgba(200,168,75,0.4)", borderRadius:14, padding:20, maxWidth:520, width:"100%", maxHeight:"82vh", overflowY:"auto" }} onClick={e => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-          <div style={{ fontSize:16, color:"#f0d060", fontWeight:"bold" }}>⚔️ Head-to-Head</div>
+          <div style={{ fontSize:16, color:"#f0d060", fontWeight:"bold" }}>⚔️ H2H · {isP1 ? "Phase 1" : "Phase 2"}</div>
           <button onClick={onClose} style={{ background:"none", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:18 }}>✕</button>
         </div>
+
+        {/* Score header */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:8, marginBottom:16, alignItems:"center" }}>
           <div style={{ background:"rgba(200,168,75,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
             <div style={{ fontSize:14, color:"#f0d060", fontWeight:"bold" }}>{playerA.name}</div>
-            <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060" }}>{ptsA}</div>
+            <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060" }}>{displayPtsA}</div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
           </div>
           <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center" }}>VS</div>
           <div style={{ background:"rgba(96,192,255,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
             <div style={{ fontSize:14, color:"#60c0ff", fontWeight:"bold" }}>{playerB.name}</div>
-            <div style={{ fontSize:28, fontWeight:"bold", color:"#60c0ff" }}>{ptsB}</div>
+            <div style={{ fontSize:28, fontWeight:"bold", color:"#60c0ff" }}>{displayPtsB}</div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
           </div>
         </div>
+
+        {/* Agreement stats */}
         <div style={{ ...S.card, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, textAlign:"center", marginBottom:12 }}>
           <div><div style={{ fontSize:18, fontWeight:"bold", color:"#8fffb0" }}>{agree}</div><div style={{ fontSize:10, color:"#9ab8a0" }}>agree</div></div>
           <div><div style={{ fontSize:18, fontWeight:"bold", color:"#ff9090" }}>{disagree}</div><div style={{ fontSize:10, color:"#9ab8a0" }}>clash</div></div>
@@ -1135,51 +1167,120 @@ function H2HModal({ playerA, playerB, predictions, liveResults, onClose }) {
             <div style={{ fontSize:12 }}><span style={{ color:"#f0d060" }}>{playerA.name.split(" ")[0]} {aWins}</span>{" – "}<span style={{ color:"#60c0ff" }}>{bWins} {playerB.name.split(" ")[0]}</span></div>
           </div>
         </div>
-        <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 PROP PICKS</div>
-        {DAILY_PROPS.map((prop, i) => {
-          const pa = predA.propPicks?.[i], pb = predB.propPicks?.[i];
-          const actual = propResults[i];
-          const settled = actual != null;
-          const same = pa != null && pb != null && pa === pb;
-          const diff = pa != null && pb != null && pa !== pb;
-          return (
-            <div key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:11 }}>
-              <span style={{ color:"#9ab8a0", minWidth:36 }}>{prop.date}</span>
-              <span style={{ flex:1, color:"#c8b8a0", fontSize:10 }}>{prop.q.substring(0,42)}…</span>
-              <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pa==null?"#555": settled&&pa===actual?"#8fffb0": settled&&pa!==actual?"#ff9090":"#f0d060" }}>{pa==null?"—":pa?"Y":"N"}</span>
-              <span style={{ color: same?"#8fffb0":diff?"#ff9090":"#555", fontSize:14, minWidth:16, textAlign:"center" }}>{same?"=":diff?"≠":"·"}</span>
-              <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pb==null?"#555": settled&&pb===actual?"#8fffb0": settled&&pb!==actual?"#ff9090":"#60c0ff" }}>{pb==null?"—":pb?"Y":"N"}</span>
-            </div>
-          );
-        })}
-        <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🏅 GROUP RANKINGS</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-          {Object.keys(TEAMS_BY_GROUP).map(g => {
-            const ra = predA.groupRankings?.[g], rb = predB.groupRankings?.[g];
-            const actual = liveResults?.groupRankings?.[g];
-            const ptA = actual && ra ? calcGroupRankingPoints(ra, actual) : null;
-            const ptB = actual && rb ? calcGroupRankingPoints(rb, actual) : null;
+
+        {/* ── P1 CONTENT ── */}
+        {isP1 && (<>
+          <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 DAILY PROPS</div>
+          {DAILY_PROPS.map((prop, i) => {
+            const pa = predA.propPicks?.[i], pb = predB.propPicks?.[i];
+            const actual = propResults[i];
+            const settled = actual != null;
+            const same = pa != null && pb != null && pa === pb;
+            const diff = pa != null && pb != null && pa !== pb;
             return (
-              <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"6px 8px" }}>
-                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
-                  <span>GROUP {g}</span>
-                  {ptA !== null && <span><span style={{ color:"#f0d060" }}>{ptA}</span><span style={{ color:"#9ab8a0" }}>–</span><span style={{ color:"#60c0ff" }}>{ptB}</span></span>}
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:11 }}>
+                <span style={{ color:"#9ab8a0", minWidth:36 }}>{prop.date}</span>
+                <span style={{ flex:1, color:"#c8b8a0", fontSize:10 }}>{prop.q.substring(0,42)}…</span>
+                <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pa==null?"#555": settled&&pa===actual?"#8fffb0": settled&&pa!==actual?"#ff9090":"#f0d060" }}>{pa==null?"—":pa?"Y":"N"}</span>
+                <span style={{ color: same?"#8fffb0":diff?"#ff9090":"#555", fontSize:14, minWidth:16, textAlign:"center" }}>{same?"=":diff?"≠":"·"}</span>
+                <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pb==null?"#555": settled&&pb===actual?"#8fffb0": settled&&pb!==actual?"#ff9090":"#60c0ff" }}>{pb==null?"—":pb?"Y":"N"}</span>
+              </div>
+            );
+          })}
+          <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🏅 GROUP RANKINGS</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+            {Object.keys(TEAMS_BY_GROUP).map(g => {
+              const ra = predA.groupRankings?.[g], rb = predB.groupRankings?.[g];
+              const actual = liveResults?.groupRankings?.[g];
+              const ptA = actual && ra ? calcGroupRankingPoints(ra, actual) : null;
+              const ptB = actual && rb ? calcGroupRankingPoints(rb, actual) : null;
+              return (
+                <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"6px 8px" }}>
+                  <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
+                    <span>GROUP {g}</span>
+                    {ptA !== null && <span><span style={{ color:"#f0d060" }}>{ptA}</span><span style={{ color:"#9ab8a0" }}>–</span><span style={{ color:"#60c0ff" }}>{ptB}</span></span>}
+                  </div>
+                  {["🥇","🥈","🥉","4️⃣"].map((medal, i) => {
+                    const ta = ra?.[i], tb = rb?.[i], match = ta && tb && ta === tb;
+                    return (
+                      <div key={i} style={{ display:"flex", gap:4, fontSize:10, marginBottom:1 }}>
+                        <span>{medal}</span>
+                        <span style={{ color:match?"#8fffb0":"#f0d060", flex:1 }}>{ta||"—"}</span>
+                        <span style={{ color:"#555" }}>|</span>
+                        <span style={{ color:match?"#8fffb0":"#60c0ff", flex:1, textAlign:"right" }}>{tb||"—"}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-                {["🥇","🥈","🥉","4️⃣"].map((medal, i) => {
-                  const ta = ra?.[i], tb = rb?.[i], match = ta && tb && ta === tb;
+              );
+            })}
+          </div>
+        </>)}
+
+        {/* ── P2 CONTENT ── */}
+        {!isP1 && (<>
+          <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 BRACKET PICKS</div>
+          {Object.entries(ROUND_LABELS).map(([round, roundLabel]) => {
+            const matches = KNOCKOUT_ROUNDS[round] || [];
+            return (
+              <div key={round} style={{ marginBottom:10 }}>
+                <div style={{ fontSize:10, color:"#9ab8a0", fontWeight:"bold", letterSpacing:1, marginBottom:4 }}>{roundLabel.toUpperCase()}</div>
+                {matches.map(m => {
+                  const pa = predA.phase2Picks?.[m.id], pb = predB.phase2Picks?.[m.id];
+                  const actual = livePhase2?.[m.id];
+                  const same = pa && pb && pa === pb;
+                  const diff = pa && pb && pa !== pb;
+                  const pts = ROUND_PTS[round];
                   return (
-                    <div key={i} style={{ display:"flex", gap:4, fontSize:10, marginBottom:1 }}>
-                      <span>{medal}</span>
-                      <span style={{ color:match?"#8fffb0":"#f0d060", flex:1 }}>{ta||"—"}</span>
-                      <span style={{ color:"#555" }}>|</span>
-                      <span style={{ color:match?"#8fffb0":"#60c0ff", flex:1, textAlign:"right" }}>{tb||"—"}</span>
+                    <div key={m.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", fontSize:10 }}>
+                      <span style={{ color:"#9ab8a0", minWidth:56, fontSize:9 }}>{m.label}</span>
+                      <span style={{ flex:1, color: pa&&actual&&pa===actual?"#8fffb0":pa&&actual&&pa!==actual?"#ff9090":"#f0d060", fontWeight: pa?"bold":"normal" }}>{pa||"—"}</span>
+                      <span style={{ color: same?"#8fffb0":diff?"#ff9090":"#555", fontSize:13, minWidth:16, textAlign:"center" }}>{same?"=":diff?"≠":"·"}</span>
+                      <span style={{ flex:1, textAlign:"right", color: pb&&actual&&pb===actual?"#8fffb0":pb&&actual&&pb!==actual?"#ff9090":"#60c0ff", fontWeight: pb?"bold":"normal" }}>{pb||"—"}</span>
+                      {actual && <span style={{ fontSize:9, color:"#9ab8a0", minWidth:28, textAlign:"right" }}>+{pts}</span>}
                     </div>
                   );
                 })}
               </div>
             );
           })}
-        </div>
+
+          <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🎲 P2 PROPS</div>
+          {P2_PROPS.map(prop => {
+            const pa = predA.p2PropPicks?.[prop.id], pb = predB.p2PropPicks?.[prop.id];
+            const actual = liveP2Props?.[prop.id];
+            const settled = actual != null;
+            const same = pa != null && pb != null && pa === pb;
+            const diff = pa != null && pb != null && pa !== pb;
+            return (
+              <div key={prop.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:11 }}>
+                <span style={{ color:"#9ab8a0", minWidth:28, fontSize:9 }}>{ROUND_LABELS[prop.round]?.slice(0,3)}</span>
+                <span style={{ flex:1, color:"#c8b8a0", fontSize:10 }}>{prop.q.substring(0,40)}…</span>
+                <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pa==null?"#555": settled&&pa===actual?"#8fffb0": settled&&pa!==actual?"#ff9090":"#f0d060" }}>{pa==null?"—":pa?"Y":"N"}</span>
+                <span style={{ color: same?"#8fffb0":diff?"#ff9090":"#555", fontSize:14, minWidth:16, textAlign:"center" }}>{same?"=":diff?"≠":"·"}</span>
+                <span style={{ minWidth:24, textAlign:"center", fontWeight:"bold", color: pb==null?"#555": settled&&pb===actual?"#8fffb0": settled&&pb!==actual?"#ff9090":"#60c0ff" }}>{pb==null?"—":pb?"Y":"N"}</span>
+              </div>
+            );
+          })}
+
+          {goldenBoot?.options && (
+            <>
+              <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🥇 GOLDEN BOOT</div>
+              {(() => {
+                const pa = predA.goldenBootPick, pb = predB.goldenBootPick;
+                const actual = goldenBoot.answer;
+                const same = pa && pb && pa === pb;
+                return (
+                  <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:12 }}>
+                    <span style={{ flex:1, color: pa&&actual&&pa===actual?"#8fffb0":pa&&actual&&pa!==actual?"#ff9090":"#f0d060" }}>{pa||"—"}</span>
+                    <span style={{ color: same?"#8fffb0":pa&&pb?"#ff9090":"#555", fontSize:14 }}>{same?"=":pa&&pb?"≠":"·"}</span>
+                    <span style={{ flex:1, textAlign:"right", color: pb&&actual&&pb===actual?"#8fffb0":pb&&actual&&pb!==actual?"#ff9090":"#60c0ff" }}>{pb||"—"}</span>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </>)}
       </div>
     </div>
   );
@@ -1590,6 +1691,7 @@ export default function WorldCupPool() {
   const [h2hPlayerA, setH2hPlayerA]       = useState(null);
   const [h2hPlayerB, setH2hPlayerB]       = useState(null);
   const [lbTab, setLbTab]                 = useState("standings");
+  const [lbPhase, setLbPhase]             = useState("p1"); // "p1" | "p2"
   const [adminPinMsg, setAdminPinMsg]     = useState("");
   const [prevPropResults, setPrevPropResults] = useState(null);
   const [ticker, setTicker]                   = useState(null);
@@ -2014,7 +2116,7 @@ export default function WorldCupPool() {
 
       {/* H2H Modal */}
       {h2hPlayerA && h2hPlayerB && (
-        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
+        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} livePhase2={livePhase2} liveP2Props={liveP2Props} goldenBoot={goldenBoot} phase={lbPhase} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
       )}
 
       {/* How It Works Modal */}
@@ -2262,8 +2364,10 @@ export default function WorldCupPool() {
             <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.08)" }}>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>🔒 WHEN PICKS LOCK</div>
               {[
-                ["🏅 Group Rankings", "Lock at tournament kickoff — Jun 11 at noon PT (Mexico vs South Africa). You cannot change your group standings after this."],
-                ["🎲 Daily Props", "Each prop locks before the first match of that day. Once the day's games start, your answer is final."],
+                ["🏅 P1 — Group Rankings", "Lock at tournament kickoff — Jun 11 at noon PT (Mexico vs South Africa)."],
+                ["🎲 P1 — Daily Props", "Each prop locks before the first match of that day. Once the day's games start, your answer is final."],
+                ["🏆 P2 — Bracket + Golden Boot", "Lock Jun 28 at noon ET, right after the group stage ends."],
+                ["🎲 P2 — Knockout Props", "Each round's 3 props lock at that round's first kickoff (R16, QF, SF, Final)."],
                 ["⚠️ Submit early!", "Don't wait until the last minute — picks that aren't saved before the deadline won't count."],
               ].map(([l,v]) => (
                 <div key={l} style={{ padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:12 }}>
@@ -3119,58 +3223,53 @@ export default function WorldCupPool() {
               </button>
             </div>
 
-            {/* Sub-tabs */}
-            <div style={{ display:"flex", gap:4, marginBottom:14 }}>
-              {[["standings","🏅 Standings"],["chart","📈 P1 Chart"],["chart2","📈 P2 Chart"],["h2h","⚔️ H2H"]].map(([t,l]) => (
-                <button key={t} style={S.tab(lbTab===t)} onClick={() => setLbTab(t)}>{l}</button>
-              ))}
-            </div>
-
             {liveResults && (
               <div style={{ ...S.card, fontSize:12, color:"#9ab8a0", marginBottom:12 }}>
                 <span style={{ color:"#f0d060" }}>📡</span> {liveResults.matchday||"Group Stage"} · {Object.values(liveResults.groupRankings||{}).filter(Boolean).length}/12 groups final · {(liveResults.propResults||[]).filter(v=>v!==null).length}/34 props settled
               </div>
             )}
 
-            {lbTab==="standings" && (() => {
+            {/* Phase tabs */}
+            <div style={{ display:"flex", gap:4, marginBottom:12 }}>
+              {[["p1","🏅 Phase 1"],["p2","🏆 Phase 2"]].map(([ph, label]) => (
+                <button key={ph} style={{ ...S.tab(lbPhase===ph), flex:1, fontSize:13 }} onClick={() => setLbPhase(ph)}>{label}</button>
+              ))}
+            </div>
+
+            {/* Sub-tabs */}
+            <div style={{ display:"flex", gap:4, marginBottom:14 }}>
+              {[["standings","🏅 Standings"],["chart","📈 Chart"],["h2h","⚔️ H2H"]].map(([t,l]) => (
+                <button key={t} style={S.tab(lbTab===t)} onClick={() => setLbTab(t)}>{l}</button>
+              ))}
+            </div>
+
+            {/* ── P1 STANDINGS ── */}
+            {lbPhase==="p1" && lbTab==="standings" && (() => {
               const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
               const entryFee = settings.entryFee || 25;
               const prizes1 = calcPrizes(leaderboard, paid, pot1, entryFee, settings.payouts1);
-              const prizes2 = calcPrizes(leaderboard, paid, pot2, entryFee, settings.payouts2);
               const refund1 = entryFee;
-              const refund2 = entryFee;
               const dist1 = Math.max(0, pot1 - refund1);
-              const dist2 = Math.max(0, pot2 - refund2);
               const pcts1 = settings.payouts1 || [60,25,10,5,0];
-              const pcts2 = settings.payouts2 || [60,25,10,5,0];
               return (
                 <div>
-                  {/* Pot card */}
                   <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
-                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 THE POTS · {paidCount} paid · ${total} collected · 🎩 commissioner ${commCut}</div>
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                      {[[pot1,"PHASE 1 — GROUP STAGE",dist1,pcts1,refund1],[pot2,"PHASE 2 — KNOCKOUTS",dist2,pcts2,refund2]].map(([pot,label,dist,pcts,refund]) => (
-                        <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
-                          <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>{label}</div>
-                          <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot}</div>
-                          {paidCount >= 2 && <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>↩ last ${refund} · distributable ${dist}</div>}
-                          {paidCount >= 2 && dist > 0 && (
-                            <div style={{ fontSize:10, color:"#9ab8a0" }}>
-                              {["🥇","🥈","🥉","4️⃣","5️⃣"].map((m,i) => pcts[i]>0 ? `${m} $${Math.round(dist*pcts[i]/100)}` : null).filter(Boolean).join(" · ")}
-                            </div>
-                          )}
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 PHASE 1 POT · {paidCount} paid · ${total} collected · 🎩 ${commCut} commissioner</div>
+                    <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                      <div style={{ fontSize:15, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot1}</div>
+                      {paidCount >= 2 && <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>↩ last place ${refund1} back · distributable ${dist1}</div>}
+                      {paidCount >= 2 && dist1 > 0 && (
+                        <div style={{ fontSize:10, color:"#9ab8a0" }}>
+                          {["🥇","🥈","🥉","4️⃣","5️⃣"].map((m,i) => pcts1[i]>0 ? `${m} $${Math.round(dist1*pcts1[i]/100)}` : null).filter(Boolean).join(" · ")}
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
-
-                  {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet — go to Home to join!</div>}
+                  {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
                   {leaderboard.map((p, i) => {
                     const pred = predictions[p.id];
                     const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
                     const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
-                    const p2BracketDone = pred ? Object.keys(pred.phase2Picks||{}).filter(k => !k.startsWith("p2_") && k !== "goldenBoot").length : 0;
-                    const p2PropsDone = pred ? Object.keys(pred.p2PropPicks||{}).filter(k => pred.p2PropPicks[k] !== null).length : 0;
                     const isLastPaid = leaderboard.filter(x=>paid[x.id]).at(-1)?.id === p.id && paid[p.id];
                     return (
                       <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
@@ -3181,32 +3280,90 @@ export default function WorldCupPool() {
                             {paid[p.id] && <span style={{ fontSize:9, background:"rgba(100,200,100,0.2)", color:"#8fffb0", borderRadius:4, padding:"1px 5px" }}>paid {paid[p.id+"_method"]==="cash"?"💵":"💸"}</span>}
                             {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
                             {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
-                            {prizes1[p.id] && prizes1[p.id] !== refund1 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P1 💰${prizes1[p.id]}</span>}
-                            {prizes2[p.id] && prizes2[p.id] !== refund2 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>P2 💰${prizes2[p.id]}</span>}
+                            {prizes1[p.id] && prizes1[p.id] !== refund1 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>💰${prizes1[p.id]}</span>}
                           </div>
-                          <div style={{ fontSize:10, color:"#9ab8a0" }}>
-                            P1: {grpDone}/12 groups · {prpDone}/34 props
-                            {isPhase2Open() ? ` · P2: ${p2BracketDone}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket · ${p2PropsDone}/${P2_PROPS.length} props` : ""}
-                          </div>
+                          <div style={{ fontSize:10, color:"#9ab8a0" }}>{grpDone}/12 groups · {prpDone}/34 props</div>
                         </div>
                         <div style={{ textAlign:"right" }}>
-                          <div style={{ fontSize:24, fontWeight:"bold", color:"#f0d060" }}>{p.pts}</div>
-                          <div style={{ fontSize:9, color:"#9ab8a0" }}>P1 / {MAX_PTS}</div>
-                          {isPhase2Open() && <div style={{ fontSize:16, fontWeight:"bold", color:"#c8a84b", marginTop:2 }}>{p.pts2}</div>}
-                          {isPhase2Open() && <div style={{ fontSize:9, color:"#9ab8a0" }}>P2 / {MAX_PHASE2_PTS}</div>}
+                          <div style={{ fontSize:26, fontWeight:"bold", color:"#f0d060" }}>{p.pts}</div>
+                          <div style={{ fontSize:9, color:"#9ab8a0" }}>/ {MAX_PTS} pts</div>
                         </div>
                       </div>
                     );
                   })}
                   <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", marginTop:8 }}>
-                    Leaderboard syncs every 30s. P1 and P2 are scored independently — separate pots, separate leaderboards at payout.
+                    Leaderboard syncs every 30s. P1 and P2 are independent pots.
                   </div>
                 </div>
               );
             })()}
 
-            {/* POINTS CHART */}
-            {lbTab==="chart" && (
+            {/* ── P2 STANDINGS ── */}
+            {lbPhase==="p2" && lbTab==="standings" && (() => {
+              const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
+              const entryFee = settings.entryFee || 25;
+              const lb2 = [...leaderboard].sort((a,b) => b.pts2 - a.pts2);
+              const prizes2 = calcPrizes(lb2, paid, pot2, entryFee, settings.payouts2);
+              const refund2 = entryFee;
+              const dist2 = Math.max(0, pot2 - refund2);
+              const pcts2 = settings.payouts2 || [60,25,10,5,0];
+              return (
+                <div>
+                  {!isPhase2Open() && (
+                    <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
+                      <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Phase 2 begins Jun 28</div>
+                      <div style={{ fontSize:11, color:"#9ab8a0" }}>P2 standings will appear once the knockout stage starts</div>
+                    </div>
+                  )}
+                  <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", marginBottom:8, letterSpacing:1 }}>💰 PHASE 2 POT · {paidCount} paid</div>
+                    <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                      <div style={{ fontSize:15, fontWeight:"bold", color:"#f0d060", marginBottom:4 }}>${pot2}</div>
+                      {paidCount >= 2 && <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>↩ last place ${refund2} back · distributable ${dist2}</div>}
+                      {paidCount >= 2 && dist2 > 0 && (
+                        <div style={{ fontSize:10, color:"#9ab8a0" }}>
+                          {["🥇","🥈","🥉","4️⃣","5️⃣"].map((m,i) => pcts2[i]>0 ? `${m} $${Math.round(dist2*pcts2[i]/100)}` : null).filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {lb2.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
+                  {lb2.map((p, i) => {
+                    const pred = predictions[p.id];
+                    const p2BracketDone = pred ? Object.keys(pred.phase2Picks||{}).filter(k => !k.startsWith("p2_") && k !== "goldenBoot").length : 0;
+                    const p2PropsDone = pred ? Object.keys(pred.p2PropPicks||{}).filter(k => pred.p2PropPicks[k] !== null).length : 0;
+                    const isLastPaid = lb2.filter(x=>paid[x.id]).at(-1)?.id === p.id && paid[p.id];
+                    return (
+                      <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
+                        <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i===3?"4️⃣":i===4?"5️⃣":`#${i+1}`}</div>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:15, color:i===0?"#f0d060":"#f0e6c8", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                            {p.name}
+                            {paid[p.id] && <span style={{ fontSize:9, background:"rgba(100,200,100,0.2)", color:"#8fffb0", borderRadius:4, padding:"1px 5px" }}>paid {paid[p.id+"_method"]==="cash"?"💵":"💸"}</span>}
+                            {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
+                            {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
+                            {prizes2[p.id] && prizes2[p.id] !== refund2 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>💰${prizes2[p.id]}</span>}
+                          </div>
+                          <div style={{ fontSize:10, color:"#9ab8a0" }}>
+                            {isPhase2Open() ? `${p2BracketDone}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket · ${p2PropsDone}/${P2_PROPS.length} props` : "Phase 2 opens Jun 28"}
+                          </div>
+                        </div>
+                        <div style={{ textAlign:"right" }}>
+                          <div style={{ fontSize:26, fontWeight:"bold", color:"#c8a84b" }}>{p.pts2}</div>
+                          <div style={{ fontSize:9, color:"#9ab8a0" }}>/ {MAX_PHASE2_PTS} pts</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", marginTop:8 }}>
+                    P2 includes bracket picks, knockout props, and Golden Boot. Syncs every 30s.
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── P1 CHART ── */}
+            {lbPhase==="p1" && lbTab==="chart" && (
               <div style={S.card}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 PHASE 1 POINTS OVER TIME</div>
                 <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>Cumulative Phase 1 points per player as daily props settle throughout the group stage.</div>
@@ -3223,8 +3380,8 @@ export default function WorldCupPool() {
               </div>
             )}
 
-            {/* P2 CHART */}
-            {lbTab==="chart2" && (
+            {/* ── P2 CHART ── */}
+            {lbPhase==="p2" && lbTab==="chart" && (
               <div style={S.card}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 PHASE 2 POINTS OVER TIME</div>
                 <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>
@@ -3233,7 +3390,7 @@ export default function WorldCupPool() {
                 {isPhase2Open() ? (
                   <>
                     <div style={{ textAlign:"center", padding:"16px 0", color:"#9ab8a0", fontSize:13 }}>
-                      P2 chart will populate as knockout results and props settle.
+                      Chart will populate as knockout results and props settle.
                     </div>
                     <div style={{ marginTop:16, borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:12 }}>
                       {[...leaderboard].sort((a,b) => b.pts2 - a.pts2).map((p, i) => (
@@ -3251,7 +3408,7 @@ export default function WorldCupPool() {
               </div>
             )}
 
-            {/* HEAD-TO-HEAD */}
+            {/* ── H2H (shared for both phases) ── */}
             {lbTab==="h2h" && (
               <div style={S.card}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>⚔️ HEAD-TO-HEAD</div>
@@ -3280,7 +3437,7 @@ export default function WorldCupPool() {
                 </div>
                 {h2hPlayerA && h2hPlayerB ? (
                   <button style={{ ...S.btn, width:"100%" }} onClick={() => {}}>
-                    ⚔️ {h2hPlayerA.name} vs {h2hPlayerB.name} — tap to compare
+                    ⚔️ {h2hPlayerA.name} vs {h2hPlayerB.name} · {lbPhase==="p1"?"Phase 1":"Phase 2"}
                   </button>
                 ) : (
                   <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center" }}>
