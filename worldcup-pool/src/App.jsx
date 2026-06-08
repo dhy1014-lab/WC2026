@@ -270,6 +270,8 @@ const PROP_LOCKS = [
 ];
 
 function isGroupRankingsLocked() { return new Date() >= GROUP_RANKINGS_LOCK; }
+const GROUP_STAGE_END = new Date("2026-06-28T04:00:00Z"); // Jun 27 midnight PT
+function isGroupStageComplete() { return new Date() >= GROUP_STAGE_END; }
 function isPropLocked(i) { return new Date() >= PROP_LOCKS[i]; }
 
 
@@ -2001,6 +2003,15 @@ export default function WorldCupPool() {
 
   const groupsDone = Object.keys(groupRankings).length;
   const propsDone  = propPicks.filter(p => p !== null).length;
+  // Count unlocked props only for "incomplete" nudge
+  const unlockedProps = DAILY_PROPS.filter((_, i) => !isPropLocked(i)).length;
+  const unlockedPropsDone = propPicks.filter((p, i) => p !== null && !isPropLocked(i)).length;
+  const totalBracketMatches = Object.values(KNOCKOUT_ROUNDS).flat().length;
+  const bracketDone = Object.keys(phase2Picks).length;
+  const p2PropsDone = Object.keys(p2PropPicks).length;
+  const p2Complete = !isPhase2Open() || (bracketDone >= totalBracketMatches && goldenBootPick && tbP2 !== "");
+  const p1Complete = groupsDone >= 12 && (unlockedProps === 0 || unlockedPropsDone >= unlockedProps) && tbP1 !== "";
+  const hasIncomplete = currentPlayer && !isAdmin && (!p1Complete || (isPhase2Open() && !p2Complete));
 
   const leaderboard = players
     .map(p => ({
@@ -2474,6 +2485,21 @@ export default function WorldCupPool() {
               <p style={{ color:"#9ab8a0", fontSize:12, margin:"4px 0 0" }}>Phase 1: Group Stage · June 11–27 · Backed by Firebase ☁️</p>
             </div>
 
+            {/* Incomplete picks banner */}
+            {hasIncomplete && (
+              <div style={{ background:"rgba(240,180,0,0.12)", border:"1px solid rgba(240,180,0,0.35)", borderRadius:8, padding:"10px 14px", marginBottom:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+                <div>
+                  <div style={{ fontSize:12, color:"#f0d060", fontWeight:"bold", marginBottom:2 }}>⚠️ You have incomplete picks</div>
+                  <div style={{ fontSize:11, color:"#c8b8a0" }}>
+                    {!p1Complete && `P1: ${groupsDone}/12 groups · ${unlockedPropsDone}/${unlockedProps} props${tbP1===""?" · tiebreaker missing":""}`}
+                    {!p1Complete && isPhase2Open() && !p2Complete && " · "}
+                    {isPhase2Open() && !p2Complete && `P2: ${bracketDone}/${totalBracketMatches} bracket${!goldenBootPick?" · golden boot missing":""}${tbP2===""?" · tiebreaker missing":""}`}
+                  </div>
+                </div>
+                <button onClick={() => setScreen("predict")} style={{ ...S.btn, fontSize:11, padding:"6px 12px", whiteSpace:"nowrap" }}>Go to My Picks →</button>
+              </div>
+            )}
+
             {/* Daily quote */}
             {(() => {
               const q = getDailyQuote();
@@ -2659,13 +2685,18 @@ export default function WorldCupPool() {
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <div>
                 <div style={{ fontSize:17, color:"#f0d060" }}>📋 {displayName(currentPlayer)}'s Picks</div>
-                <div style={{ fontSize:11, color:"#9ab8a0" }}>{groupsDone}/12 groups · {propsDone}/34 props</div>
+                <div style={{ fontSize:11, color: hasIncomplete ? "#f0d060" : "#9ab8a0" }}>{hasIncomplete ? "⚠️ " : ""}{groupsDone}/12 groups · {propsDone}/34 props{isPhase2Open() && !p2Complete ? ` · P2 ${bracketDone}/${totalBracketMatches} bracket` : ""}</div>
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setScreen("home")} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Home</button>
-                <button onClick={savePreds} disabled={saving} style={{ ...S.btn, background:saved?"#2a6040":saving?"#555":"linear-gradient(90deg,#c8a84b,#f0d060)", color:saved?"#8fffb0":"#0a1628" }}>
-                  {saving ? "Saving…" : saved ? "✓ Saved!" : "Save"}
-                </button>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                  <button onClick={savePreds} disabled={saving} style={{ ...S.btn, background:saved?"#2a6040":saving?"#555":"linear-gradient(90deg,#c8a84b,#f0d060)", color:saved?"#8fffb0":"#0a1628" }}>
+                    {saving ? "Saving…" : saved ? "✓ Saved!" : "Save"}
+                  </button>
+                  {hasIncomplete && !saved && (
+                    <div style={{ fontSize:10, color:"#f0d060", textAlign:"right" }}>⚠️ some picks missing</div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -2688,7 +2719,7 @@ export default function WorldCupPool() {
             {/* ── PHASE 1 SUB-TABS ── */}
             {picksPhase==="p1" && (
               <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
-                {[["groups",`🏅 Groups (${groupsDone}/12)`],["props",`🎲 Props (${propsDone}/34)`],["tb1",`🔢 Tiebreaker${tbP1?" ✓":""}`]].map(([t,l]) => (
+                {[["groups", groupsDone<12 ? `⚠️ Groups (${groupsDone}/12)` : `✓ Groups (12/12)`],["props", unlockedProps>0 && unlockedPropsDone<unlockedProps ? `⚠️ Props (${propsDone}/34)` : `✓ Props (${propsDone}/34)`],["tb1", tbP1==="" ? "⚠️ Tiebreaker" : `✓ Tiebreaker`]].map(([t,l]) => (
                   <button key={t} style={S.tab(predTab===t)} onClick={() => setPredTab(t)}>{l}</button>
                 ))}
               </div>
@@ -2697,7 +2728,7 @@ export default function WorldCupPool() {
             {/* ── PHASE 2 SUB-TABS ── */}
             {picksPhase==="p2" && (
               <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
-                {[["bracket","🏆 Bracket"],["props","🎲 Props"],["tb2",`🔢 Tiebreaker${tbP2?" ✓":""}`]].map(([t,l]) => (
+                {[["bracket", isPhase2Open() && bracketDone<totalBracketMatches ? `⚠️ Bracket (${bracketDone}/${totalBracketMatches})` : `${bracketDone>0?"✓ ":""}Bracket${bracketDone>0?" ("+bracketDone+"/"+totalBracketMatches+")":""}`],["props","🎲 Props"],["tb2", isPhase2Open() && tbP2==="" ? "⚠️ Tiebreaker" : `${tbP2?"✓ ":""}Tiebreaker`]].map(([t,l]) => (
                   <button key={t} style={S.tab(p2Tab===t)} onClick={() => setP2Tab(t)}>{l}</button>
                 ))}
               </div>
@@ -3390,7 +3421,7 @@ export default function WorldCupPool() {
                                 style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px", cursor:"pointer" }}>
                                 <span style={{ fontSize:12, color:"#f0d060", width:20 }}>#{rank+1}</span>
                                 <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{displayName(p)}</span>
-                                <span style={{ fontSize:11, color:"#9ab8a0" }}>Grp <strong style={{ color:"#f0d060" }}>{groupPts}</strong></span>
+                                <span style={{ fontSize:11, color:"#9ab8a0" }}>{isGroupStageComplete() ? "Grp" : "Grp 📊"} <strong style={{ color:"#f0d060" }}>{groupPts}</strong></span>
                                 <span style={{ fontSize:11, color:"#9ab8a0" }}>Props <strong style={{ color:"#f0d060" }}>{propPts}</strong></span>
                                 <span style={{ fontSize:14, fontWeight:"bold", color:"#8fffb0", minWidth:50, textAlign:"right" }}>{total} pts</span>
                                 <span style={{ fontSize:10, color:"#666" }}>{expanded?"▼":"▶"}</span>
@@ -3783,6 +3814,11 @@ export default function WorldCupPool() {
                       )}
                     </div>
                   </div>
+                  {!isGroupStageComplete() && liveResults?.groupRankings && (
+                    <div style={{ background:"rgba(255,200,50,0.1)", border:"1px solid rgba(255,200,50,0.25)", borderRadius:6, padding:"7px 12px", fontSize:11, color:"#f0d060", marginBottom:10 }}>
+                      📊 Group pts are projected — group stage final standings lock Jun 27
+                    </div>
+                  )}
                   {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
                   {leaderboard.map((p, i) => {
                     const pred = predictions[p.id];
@@ -3800,7 +3836,10 @@ export default function WorldCupPool() {
                             {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
                             {prizes1[p.id] && prizes1[p.id] !== refund1 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>💰${prizes1[p.id]}</span>}
                           </div>
-                          <div style={{ fontSize:10, color:"#9ab8a0" }}>{grpDone}/12 groups · {prpDone}/34 props</div>
+                          {(() => {
+                            const incomplete = (!pred) || grpDone < 12 || prpDone < 34;
+                            return <div style={{ fontSize:10, color: incomplete ? "#f0a020" : "#9ab8a0" }}>{incomplete ? "⚠️ " : "✓ "}{grpDone}/12 groups · {prpDone}/34 props</div>;
+                          })()}
                         </div>
                         <div style={{ textAlign:"right" }}>
                           <div style={{ fontSize:26, fontWeight:"bold", color:"#f0d060" }}>{p.pts}</div>
