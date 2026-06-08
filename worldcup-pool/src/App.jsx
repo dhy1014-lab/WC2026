@@ -1708,6 +1708,7 @@ export default function WorldCupPool() {
   const [ticker, setTicker]                   = useState(null);
   const [tickerLoading, setTickerLoading]     = useState(false);
   const [showHowItWorks, setShowHowItWorks]   = useState(false);
+  const [rulesTab, setRulesTab]               = useState("pool");
 
   // Load from Firebase on mount
   useEffect(() => {
@@ -2166,106 +2167,174 @@ export default function WorldCupPool() {
         const pcts2 = settings.payouts2 || [60,25,10,5,0];
         const dist1 = Math.max(0, pot1 - entryFee);
         const dist2 = Math.max(0, pot2 - entryFee);
+        const rt = rulesTab;
+        const setRt = setRulesTab;
+        const tabStyle = (key) => ({
+          flex:1, padding:"8px 4px", borderRadius:6, border:"1px solid", cursor:"pointer", fontSize:11,
+          borderColor: rt===key ? "#f0d060" : "rgba(255,255,255,0.12)",
+          background: rt===key ? "rgba(240,208,96,0.18)" : "rgba(255,255,255,0.04)",
+          color: rt===key ? "#f0d060" : "#9ab8a0", fontWeight: rt===key ? "bold" : "normal",
+        });
         return (
           <div style={{ position:"fixed", inset:0, zIndex:9000, background:"rgba(0,0,0,0.82)", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 14px", overflowY:"auto" }}>
             <div style={{ background:"linear-gradient(135deg,#0a1628,#0d2040)", border:"1px solid rgba(200,168,75,0.4)", borderRadius:14, maxWidth:600, width:"100%", padding:24, position:"relative" }}>
-              <button onClick={() => setShowHowItWorks(false)} style={{ position:"absolute", top:14, right:16, background:"none", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:22, lineHeight:1 }}>✕</button>
+              <button onClick={() => { setRulesTab("pool"); setShowHowItWorks(false); }} style={{ position:"absolute", top:14, right:16, background:"none", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:22, lineHeight:1 }}>✕</button>
 
               <div style={{ fontSize:22, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>⚽ How the Pool Works</div>
-              <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:20 }}>Everything you need to know to crush your mates</div>
+              <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:16 }}>Everything you need to know to crush your mates</div>
 
-              {/* Pot */}
-              <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,60,20,0.15)", marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", letterSpacing:1, marginBottom:10 }}>💰 THE PRIZE POOL</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>
-                  Everyone chips in <strong style={{ color:"#f0d060" }}>${entryFee}</strong>. After the commissioner's cut, the pot splits into <strong>two independent competitions</strong>: Phase 1 (group stage) and Phase 2 (knockouts). Win one, both, or neither.
-                </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                  {[[pot1,"Phase 1",dist1,pcts1],[pot2,"Phase 2",dist2,pcts2]].map(([pot,label,dist,pcts]) => (
-                    <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
-                      <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>🏅 {label} · ${pot}</div>
-                      <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>Last place gets ${entryFee} back</div>
-                      {["🥇","🥈","🥉","4th","5th"].map((m,i) => pcts[i]>0 ? (
-                        <div key={i} style={{ fontSize:10, color:"#c8b8a0", display:"flex", justifyContent:"space-between" }}>
-                          <span>{m}</span><span style={{ color:"#f0d060" }}>${Math.round(dist*pcts[i]/100)}</span>
-                        </div>
-                      ) : null)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Group stage scoring */}
-              <div style={{ ...S.card, marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏅 PHASE 1 — GROUP STAGE SCORING</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Predict the final standings of all 12 groups (A–L). Drag teams into your predicted order.</div>
-                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                  {[["🥇 Exact position","+6 pts","Nailed it — right team, right spot"],["✅ Correct half","+2 pts","Got them in the right half — top 2 or bottom 2"],["❌ Wrong half","0 pts","Nice try though"]].map(([l,pts,desc]) => (
-                    <div key={l} style={{ display:"flex", gap:10, alignItems:"baseline", fontSize:12 }}>
-                      <span style={{ minWidth:120, color:"#f0e6c8" }}>{l}</span>
-                      <span style={{ color:"#f0d060", fontWeight:"bold", minWidth:50 }}>{pts}</span>
-                      <span style={{ color:"#9ab8a0", fontSize:11 }}>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ fontSize:11, color:"#9ab8a0", marginTop:8 }}>Max {MAX_RANKING_PTS} pts across all 12 groups.</div>
-              </div>
-
-              {/* Props scoring */}
-              <div style={{ ...S.card, marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 PHASE 1 — DAILY PROPS SCORING</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>34 props total, 2 per day from Jun 11–27. Each prop is a YES or NO question.</div>
-                <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:10, marginBottom:8 }}>
-                  <div style={{ fontSize:12, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>Weighted odds</div>
-                  <div style={{ fontSize:12, color:"#f0e6c8", lineHeight:1.6 }}>Points are weighted by probability — the less likely outcome pays more. Every prop sums to 10 pts across the two sides. Pick the longshot right and you'll earn more than picking the chalk.</div>
-                </div>
-                <div style={{ fontSize:12, color:"#9ab8a0" }}>Example: YES=4pts / NO=6pts means the NO side is the underdog. If it happens and you called it, you bank 6.</div>
-              </div>
-
-              {/* Phase 2 */}
-              <div style={{ ...S.card, marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 PHASE 2 — KNOCKOUT STAGE</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>Opens Jun 27 evening. Bracket picks lock Jun 28 at noon ET.</div>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Bracket — pick every match winner:</div>
-                <div style={{ display:"flex", flexDirection:"column", gap:5, fontSize:12, marginBottom:12 }}>
-                  {[["Round of 32","4 pts"],["Round of 16","8 pts"],["Quarter-Finals","16 pts"],["Semi-Finals","32 pts"],["3rd Place","8 pts"],["Final","64 pts"]].map(([r,p]) => (
-                    <div key={r} style={{ display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(255,255,255,0.05)", padding:"3px 0" }}>
-                      <span style={{ color:"#c8b8a0" }}>{r}</span>
-                      <span style={{ color:"#f0d060", fontWeight:"bold" }}>{p} per correct pick</span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Props — 15 YES/NO questions, 3 per round:</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6, lineHeight:1.5 }}>Each round's props lock at that round's first kickoff. Same weighted odds system as Phase 1 — each prop sums to 10pts.</div>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#c8b8a0", marginBottom:6 }}>Golden Boot — who will be top scorer?</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", lineHeight:1.5 }}>Pick from the top 3 group-stage scorers + "Other". Locks Jun 28 at noon ET. Worth up to 20pts.</div>
-              </div>
-
-              {/* Tiebreakers */}
-              <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.06)", marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🔢 TIEBREAKERS</div>
-                <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6 }}><strong style={{ color:"#f0d060" }}>Phase 1:</strong> Total goals scored in the group stage. Closest to the actual number wins the tiebreak.</div>
-                <div style={{ fontSize:12, color:"#f0e6c8" }}><strong style={{ color:"#f0d060" }}>Phase 2:</strong> Minute of the first goal in the Final. Closest without going over (Price is Right rules).</div>
-              </div>
-
-              {/* Lock times */}
-              <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
-                {[
-                  ["🏅 Group rankings + Day 1 props","Jun 11 at noon PT — tournament kickoff (Mexico vs South Africa)"],
-                  ["🎲 Each day's props","Locks at first kickoff of that day — check the label on each card"],
-                  ["🏆 Bracket picks + Golden Boot","Jun 28 at noon ET — right after the group stage ends. Includes 3rd place match."],
-                  ["🎲 P2 props (R16–Final)","Each round's 3 props lock at that round's first kickoff"],
-                ].map(([l,v]) => (
-                  <div key={l} style={{ fontSize:12, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
-                    <div style={{ color:"#ff9090", fontWeight:"bold", marginBottom:2 }}>{l}</div>
-                    <div style={{ color:"#9ab8a0" }}>{v}</div>
-                  </div>
+              {/* Tab bar */}
+              <div style={{ display:"flex", gap:4, marginBottom:18 }}>
+                {[["pool","💰 Prize Pool"],["p1","🏅 Phase 1"],["p2","🏆 Phase 2"]].map(([key,label]) => (
+                  <button key={key} style={tabStyle(key)} onClick={() => setRt(key)}>{label}</button>
                 ))}
-                <div style={{ fontSize:11, color:"#ff9090", marginTop:8 }}>⚠️ Save your picks early — anything unsaved before the deadline doesn't count!</div>
               </div>
 
-              <button onClick={() => setShowHowItWorks(false)} style={{ ...S.btn, width:"100%", fontSize:14, padding:"10px" }}>Got it, let's go! ⚽</button>
+              {/* ── PRIZE POOL TAB ── */}
+              {rt==="pool" && (
+                <div>
+                  <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,60,20,0.15)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", letterSpacing:1, marginBottom:10 }}>💰 THE PRIZE POOL</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:8 }}>
+                      Everyone chips in <strong style={{ color:"#f0d060" }}>${entryFee}</strong>. After the commissioner's cut, the pot splits into <strong>two independent competitions</strong>: Phase 1 (group stage) and Phase 2 (knockouts). Win one, both, or neither.
+                    </div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                      {[[pot1,"Phase 1",dist1,pcts1],[pot2,"Phase 2",dist2,pcts2]].map(([pot,label,dist,pcts]) => (
+                        <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:"8px 10px" }}>
+                          <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>🏅 {label} · ${pot}</div>
+                          <div style={{ fontSize:10, color:"#aab0ff", marginBottom:4 }}>Last place gets ${entryFee} back</div>
+                          {["🥇","🥈","🥉","4th","5th"].map((m,i) => pcts[i]>0 ? (
+                            <div key={i} style={{ fontSize:10, color:"#c8b8a0", display:"flex", justifyContent:"space-between" }}>
+                              <span>{m}</span><span style={{ color:"#f0d060" }}>${Math.round(dist*pcts[i]/100)}</span>
+                            </div>
+                          ) : null)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center", marginBottom:14 }}>
+                    Use the tabs above to see how scoring works for each phase.
+                  </div>
+                </div>
+              )}
+
+              {/* ── PHASE 1 TAB ── */}
+              {rt==="p1" && (
+                <div>
+                  {/* Group Rankings */}
+                  <div style={{ ...S.card, marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏅 GROUP RANKINGS</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>Predict the final standings of all 12 groups (A–L). Drag teams into your predicted finishing order.</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
+                      {[["🥇 Exact position","+6 pts","Right team, right spot"],["✅ Correct half","+2 pts","Right half — top 2 or bottom 2"],["❌ Wrong half","0 pts","Nice try though"]].map(([l,pts,desc]) => (
+                        <div key={l} style={{ display:"flex", gap:10, alignItems:"baseline", fontSize:12 }}>
+                          <span style={{ minWidth:130, color:"#f0e6c8" }}>{l}</span>
+                          <span style={{ color:"#f0d060", fontWeight:"bold", minWidth:50 }}>{pts}</span>
+                          <span style={{ color:"#9ab8a0", fontSize:11 }}>{desc}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Max {MAX_RANKING_PTS} pts across all 12 groups (288 if you nail every position).</div>
+                  </div>
+
+                  {/* Daily Props */}
+                  <div style={{ ...S.card, marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 DAILY PROPS</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>34 props total — 2 per day, Jun 11–27. Each is a YES or NO question about that day's matches.</div>
+                    <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:10, marginBottom:8 }}>
+                      <div style={{ fontSize:12, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>Weighted odds</div>
+                      <div style={{ fontSize:12, color:"#f0e6c8", lineHeight:1.6 }}>Points are weighted by probability — the less likely outcome pays more. Every prop sums to 10 pts total. Pick the longshot right and you'll earn more than picking the chalk.</div>
+                    </div>
+                    <div style={{ fontSize:12, color:"#9ab8a0" }}>Example: <strong style={{ color:"#f0e6c8" }}>YES=4 / NO=6</strong> means NO is the underdog. Call it right and you bank 6 pts.</div>
+                  </div>
+
+                  {/* Tiebreaker */}
+                  <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.06)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🔢 TIEBREAKER</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8" }}>Total goals scored across all 72 group stage matches. If two players tie on points, whoever's guess is closest to the actual total wins the tiebreak.</div>
+                  </div>
+
+                  {/* Lock times */}
+                  <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
+                    {[
+                      ["Group rankings + Day 1 props","Jun 11 at noon PT (tournament kickoff — Mexico vs South Africa)"],
+                      ["Each day's props","Lock at the first kickoff of that day — check the label on each card"],
+                    ].map(([l,v]) => (
+                      <div key={l} style={{ fontSize:12, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                        <div style={{ color:"#ff9090", fontWeight:"bold", marginBottom:2 }}>{l}</div>
+                        <div style={{ color:"#9ab8a0" }}>{v}</div>
+                      </div>
+                    ))}
+                    <div style={{ fontSize:11, color:"#ff9090", marginTop:8 }}>⚠️ Save your picks before the deadline — anything unsaved doesn't count!</div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── PHASE 2 TAB ── */}
+              {rt==="p2" && (
+                <div>
+                  {/* Bracket */}
+                  <div style={{ ...S.card, marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 BRACKET PICKS</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>Pick the winner of every knockout match from the Round of 32 through the Final, plus the 3rd place match. The bracket opens Jun 27 evening once group stage slots are known and locks Jun 28 at noon ET.</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10 }}>Team slots (1A, 2C, etc.) auto-resolve to real teams after the group stage ends.</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:4 }}>
+                      {[["Round of 32","4 pts"],["Round of 16","8 pts"],["Quarter-Finals","16 pts"],["Semi-Finals","32 pts"],["3rd Place","8 pts"],["Final","64 pts"]].map(([r,p]) => (
+                        <div key={r} style={{ display:"flex", justifyContent:"space-between", borderBottom:"1px solid rgba(255,255,255,0.05)", padding:"4px 0", fontSize:12 }}>
+                          <span style={{ color:"#c8b8a0" }}>{r}</span>
+                          <span style={{ color:"#f0d060", fontWeight:"bold" }}>{p} per correct pick</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* P2 Props */}
+                  <div style={{ ...S.card, marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 KNOCKOUT PROPS</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>15 YES/NO props — 3 per round (R32, R16, QF, SF, Final). Same weighted odds system as Phase 1: each prop sums to 10 pts, with the less likely side paying more.</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {[["R32 props","Lock Jun 28 at noon ET (first R32 kickoff)"],["R16 props","Lock at first R16 kickoff (~Jul 3)"],["QF props","Lock at first QF kickoff (~Jul 7)"],["SF props","Lock at first SF kickoff (~Jul 14)"],["Final props","Lock at Final kickoff (~Jul 18)"]].map(([r,v]) => (
+                        <div key={r} style={{ display:"flex", gap:10, fontSize:12, padding:"4px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                          <span style={{ color:"#c8b8a0", minWidth:80 }}>{r}</span>
+                          <span style={{ color:"#9ab8a0" }}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Golden Boot */}
+                  <div style={{ ...S.card, marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🥾 GOLDEN BOOT</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6 }}>Pick who will finish as the tournament's top scorer. Options are the top 3 group-stage goal scorers plus "Other" (anyone else).</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6 }}>Points are weighted by the scoring gap — a surprise winner pays more. Worth up to 20 pts.</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Options revealed and locked Jun 28 at noon ET.</div>
+                  </div>
+
+                  {/* Tiebreaker */}
+                  <div style={{ ...S.card, borderColor:"rgba(255,180,50,0.3)", background:"rgba(255,140,0,0.06)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🔢 TIEBREAKER</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8" }}>Minute of the first goal in the Final. Closest without going over wins the tiebreak (Price is Right rules). Enter a number from 1–120; use 90+ for extra time.</div>
+                  </div>
+
+                  {/* Lock times */}
+                  <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
+                    {[
+                      ["Bracket picks + Golden Boot","Jun 28 at noon ET — locks with the first R32 kickoff"],
+                      ["R16 / QF / SF / Final props","Each round's 3 props lock at that round's first kickoff"],
+                    ].map(([l,v]) => (
+                      <div key={l} style={{ fontSize:12, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                        <div style={{ color:"#ff9090", fontWeight:"bold", marginBottom:2 }}>{l}</div>
+                        <div style={{ color:"#9ab8a0" }}>{v}</div>
+                      </div>
+                    ))}
+                    <div style={{ fontSize:11, color:"#ff9090", marginTop:8 }}>⚠️ Save your picks before the deadline — anything unsaved doesn't count!</div>
+                  </div>
+                </div>
+              )}
+
+              <button onClick={() => { setRulesTab("pool"); setShowHowItWorks(false); }} style={{ ...S.btn, width:"100%", fontSize:14, padding:"10px" }}>Got it, let's go! ⚽</button>
             </div>
           </div>
         );
