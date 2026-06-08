@@ -1149,13 +1149,13 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
         {/* Score header */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:8, marginBottom:16, alignItems:"center" }}>
           <div style={{ background:"rgba(200,168,75,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
-            <div style={{ fontSize:14, color:"#f0d060", fontWeight:"bold" }}>{playerA.name}</div>
+            <div style={{ fontSize:14, color:"#f0d060", fontWeight:"bold" }}>{displayName(playerA)}</div>
             <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060" }}>{displayPtsA}</div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
           </div>
           <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center" }}>VS</div>
           <div style={{ background:"rgba(96,192,255,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
-            <div style={{ fontSize:14, color:"#60c0ff", fontWeight:"bold" }}>{playerB.name}</div>
+            <div style={{ fontSize:14, color:"#60c0ff", fontWeight:"bold" }}>{displayName(playerB)}</div>
             <div style={{ fontSize:28, fontWeight:"bold", color:"#60c0ff" }}>{displayPtsB}</div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
           </div>
@@ -1167,7 +1167,7 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
           <div><div style={{ fontSize:18, fontWeight:"bold", color:"#ff9090" }}>{disagree}</div><div style={{ fontSize:10, color:"#9ab8a0" }}>clash</div></div>
           <div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>clash wins</div>
-            <div style={{ fontSize:12 }}><span style={{ color:"#f0d060" }}>{playerA.name.split(" ")[0]} {aWins}</span>{" – "}<span style={{ color:"#60c0ff" }}>{bWins} {playerB.name.split(" ")[0]}</span></div>
+            <div style={{ fontSize:12 }}><span style={{ color:"#f0d060" }}>{playerA.name} {aWins}</span>{" – "}<span style={{ color:"#60c0ff" }}>{bWins} {playerB.name}</span></div>
           </div>
         </div>
 
@@ -1709,6 +1709,9 @@ export default function WorldCupPool() {
   const [tickerLoading, setTickerLoading]     = useState(false);
   const [showHowItWorks, setShowHowItWorks]   = useState(false);
   const [rulesTab, setRulesTab]               = useState("pool");
+  const [newRealName, setNewRealName]         = useState("");
+  const [showRealNamePrompt, setShowRealNamePrompt] = useState(false);
+  const [editingRealName, setEditingRealName] = useState("");
 
   // Load from Firebase on mount
   useEffect(() => {
@@ -1899,15 +1902,16 @@ export default function WorldCupPool() {
   async function register() {
     const name = newName.trim();
     const pw = newPassword.trim();
-    if (!name || !pw || players.find(p => p.name === name)) return;
-    const player = { name, id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, passwordHash: hashPassword(pw) };
+    const rn = newRealName.trim();
+    if (!name || !pw || !rn || players.find(p => p.name === name)) return;
+    const player = { name, id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, passwordHash: hashPassword(pw), realName: rn };
     const np = [...players, player];
     setPlayers(np);
     await dbSave(np, predictions, paid, settings);
     setCurrentPlayer(player);
     setIsAdmin(false);
     try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
-    setNewName(""); setNewPassword("");
+    setNewName(""); setNewPassword(""); setNewRealName("");
     setGroupRankings({}); setPropPicks(Array(34).fill(null)); setPhase2Picks({}); setP2PropPicks({}); setGoldenBootPick(null); setTbP1(""); setTbP2("");
     setScreen("predict");
   }
@@ -1942,6 +1946,7 @@ export default function WorldCupPool() {
     setTbP2(e.tbP2 !== undefined ? String(e.tbP2) : "");
     setSaved(false);
     setLoginName(""); setLoginPassword("");
+    if (!player.realName) { setEditingRealName(""); setShowRealNamePrompt(true); }
     setScreen("predict");
   }
 
@@ -1962,7 +1967,17 @@ export default function WorldCupPool() {
     setSaving(true);
     const tbP1val = tbP1 !== "" ? parseInt(tbP1) : null;
     const tbP2val = tbP2 !== "" ? parseInt(tbP2) : null;
-    const np = { ...predictions, [currentPlayer.id]: { groupRankings, propPicks, phase2Picks, p2PropPicks, goldenBootPick, tbP1: tbP1val, tbP2: tbP2val } };
+    const existing = predictions[currentPlayer.id] || {};
+    const merged = {
+      groupRankings: Object.keys(groupRankings).length > 0 ? groupRankings : (existing.groupRankings || {}),
+      propPicks: propPicks.some(p => p !== null) ? propPicks : (existing.propPicks || Array(34).fill(null)),
+      phase2Picks: Object.keys(phase2Picks).length > 0 ? phase2Picks : (existing.phase2Picks || {}),
+      p2PropPicks: Object.keys(p2PropPicks).length > 0 ? p2PropPicks : (existing.p2PropPicks || {}),
+      goldenBootPick: goldenBootPick || existing.goldenBootPick || null,
+      tbP1: tbP1val !== null ? tbP1val : (existing.tbP1 ?? null),
+      tbP2: tbP2val !== null ? tbP2val : (existing.tbP2 ?? null),
+    };
+    const np = { ...predictions, [currentPlayer.id]: merged };
     setPredictions(np);
     await dbSave(players, np, paid, settings, goldenBoot);
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
@@ -1976,6 +1991,13 @@ export default function WorldCupPool() {
     const msgs = await loadMessages();
     setMessages(msgs);
   }
+
+  // Helper: display name with real name in parens if available
+  const displayName = (player) => {
+    if (!player) return "";
+    if (player.realName) return `${player.name} (${player.realName})`;
+    return player.name;
+  };
 
   const groupsDone = Object.keys(groupRankings).length;
   const propsDone  = propPicks.filter(p => p !== null).length;
@@ -2126,14 +2148,16 @@ export default function WorldCupPool() {
         <div style={S.card}>
           <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1 }}>NEW? JOIN THE POOL</div>
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Choose a name…" style={{ ...S.input, width:"100%" }} />
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Choose a username…" style={{ ...S.input, width:"100%" }} />
+            <input value={newRealName} onChange={e => setNewRealName(e.target.value)} placeholder="Your real name (shown to others)…" style={{ ...S.input, width:"100%" }} />
             <input value={newPassword} onChange={e => setNewPassword(e.target.value)}
               onKeyDown={e => e.key==="Enter" && register()}
               type="password" placeholder="Choose a password…" style={{ ...S.input, width:"100%" }} />
             <button onClick={register} style={{ ...S.btn, width:"100%" }}>Join Pool</button>
           </div>
           {players.find(p => p.name===newName.trim()) && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>Name already taken</div>}
-          {newName.trim() && !newPassword.trim() && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>Password required</div>}
+          {newName.trim() && !newRealName.trim() && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>Real name required</div>}
+          {newName.trim() && newRealName.trim() && !newPassword.trim() && <div style={{ color:"#e06060", fontSize:11, marginTop:6 }}>Password required</div>}
         </div>
       </div>
     </div>
@@ -2150,6 +2174,46 @@ export default function WorldCupPool() {
             <div style={{ background:"rgba(200,168,75,0.96)", borderRadius:12, padding:"12px 24px", color:"#0a1628", fontWeight:"bold", fontSize:16, boxShadow:"0 4px 30px rgba(200,168,75,0.5)" }}>
               {confettiProp !== null ? `+${liveResults?.propResults?.[confettiProp] ? DAILY_PROPS[confettiProp].ptsYes : DAILY_PROPS[confettiProp].ptsNo} pts — ${DAILY_PROPS[confettiProp].label}!` : "You got it!"}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Real Name Prompt Modal */}
+      {showRealNamePrompt && (
+        <div style={{ position:"fixed", inset:0, zIndex:9100, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", padding:"20px 14px" }}>
+          <div style={{ background:"linear-gradient(135deg,#0a1628,#0d2040)", border:"1px solid rgba(200,168,75,0.4)", borderRadius:14, maxWidth:380, width:"100%", padding:24 }}>
+            <div style={{ fontSize:18, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{currentPlayer?.realName ? "✏️ Edit real name" : "👋 One more thing"}</div>
+            <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:16 }}>{currentPlayer?.realName ? "Update the real name shown next to your username." : "Add your real name so your friends know who you are on the leaderboard."}</div>
+            <input
+              value={editingRealName}
+              onChange={e => setEditingRealName(e.target.value)}
+              onKeyDown={async e => {
+                if (e.key === "Enter" && editingRealName.trim()) {
+                  const updated = players.map(p => p.id === currentPlayer.id ? { ...p, realName: editingRealName.trim() } : p);
+                  const updatedPlayer = { ...currentPlayer, realName: editingRealName.trim() };
+                  setPlayers(updated); setCurrentPlayer(updatedPlayer);
+                  try { localStorage.setItem("wc2026_session", JSON.stringify(updatedPlayer)); } catch {}
+                  await dbSave(updated, predictions, paid, settings);
+                  setShowRealNamePrompt(false);
+                }
+              }}
+              placeholder="Your real name…"
+              autoFocus
+              style={{ ...S.input, width:"100%", marginBottom:10 }}
+            />
+            <button
+              onClick={async () => {
+                if (!editingRealName.trim()) return;
+                const updated = players.map(p => p.id === currentPlayer.id ? { ...p, realName: editingRealName.trim() } : p);
+                const updatedPlayer = { ...currentPlayer, realName: editingRealName.trim() };
+                setPlayers(updated); setCurrentPlayer(updatedPlayer);
+                try { localStorage.setItem("wc2026_session", JSON.stringify(updatedPlayer)); } catch {}
+                await dbSave(updated, predictions, paid, settings);
+                setShowRealNamePrompt(false);
+              }}
+              disabled={!editingRealName.trim()}
+              style={{ ...S.btn, width:"100%", opacity: editingRealName.trim() ? 1 : 0.4 }}
+            >Save &amp; Continue</button>
           </div>
         </div>
       )}
@@ -2368,6 +2432,12 @@ export default function WorldCupPool() {
           {isAdmin && (
             <button style={S.navBtn(screen==="admin")} onClick={() => setScreen("admin")}>⚙️ Admin</button>
           )}
+          {currentPlayer && !isAdmin && (
+            <button title="Edit your real name" onClick={() => { setEditingRealName(currentPlayer.realName || ""); setShowRealNamePrompt(true); }}
+              style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 8px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>
+              ✏️ {currentPlayer.name}
+            </button>
+          )}
           {currentPlayer ? (
             <button style={{ ...S.navBtn(false), background:"rgba(180,60,60,0.5)", color:"#ffdddd" }}
               onClick={() => { setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }}>
@@ -2496,7 +2566,7 @@ export default function WorldCupPool() {
                 <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                   {players.map(p => (
                     <div key={p.id} style={{ background:"rgba(200,168,75,0.1)", border:"1px solid rgba(200,168,75,0.3)", borderRadius:20, padding:"4px 12px", color:"#f0d060", fontSize:12 }}>
-                      {predictions[p.id] ? "✓ " : ""}{p.name}
+                      {predictions[p.id] ? "✓ " : ""}{displayName(p)}
                     </div>
                   ))}
                 </div>
@@ -2588,7 +2658,7 @@ export default function WorldCupPool() {
           <div>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <div>
-                <div style={{ fontSize:17, color:"#f0d060" }}>📋 {currentPlayer.name}'s Picks</div>
+                <div style={{ fontSize:17, color:"#f0d060" }}>📋 {displayName(currentPlayer)}'s Picks</div>
                 <div style={{ fontSize:11, color:"#9ab8a0" }}>{groupsDone}/12 groups · {propsDone}/34 props</div>
               </div>
               <div style={{ display:"flex", gap:8 }}>
@@ -3084,7 +3154,7 @@ export default function WorldCupPool() {
                 {players.map(p => (
                   <div key={p.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", gap:8, flexWrap:"wrap" }}>
                     <div style={{ flex:1 }}>
-                      <span style={{ fontSize:14, color:"#f0e6c8" }}>{p.name}</span>
+                      <span style={{ fontSize:14, color:"#f0e6c8" }}>{displayName(p)}</span>
                       <span style={{ fontSize:11, color:"#9ab8a0", marginLeft:8 }}>{predictions[p.id] ? "✓ picks" : "no picks"}</span>
                     </div>
                     <div style={{ display:"flex", gap:6, alignItems:"center" }}>
@@ -3319,7 +3389,7 @@ export default function WorldCupPool() {
                               <div onClick={() => setExpandedBreakdown(e => ({ ...e, ["p1_"+p.id]: !e["p1_"+p.id] }))}
                                 style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px", cursor:"pointer" }}>
                                 <span style={{ fontSize:12, color:"#f0d060", width:20 }}>#{rank+1}</span>
-                                <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{p.name}</span>
+                                <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{displayName(p)}</span>
                                 <span style={{ fontSize:11, color:"#9ab8a0" }}>Grp <strong style={{ color:"#f0d060" }}>{groupPts}</strong></span>
                                 <span style={{ fontSize:11, color:"#9ab8a0" }}>Props <strong style={{ color:"#f0d060" }}>{propPts}</strong></span>
                                 <span style={{ fontSize:14, fontWeight:"bold", color:"#8fffb0", minWidth:50, textAlign:"right" }}>{total} pts</span>
@@ -3519,7 +3589,7 @@ export default function WorldCupPool() {
                               <div onClick={() => setExpandedBreakdown(e => ({ ...e, ["p2_"+p.id]: !e["p2_"+p.id] }))}
                                 style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px", cursor:"pointer" }}>
                                 <span style={{ fontSize:12, color:"#f0d060", width:20 }}>#{rank+1}</span>
-                                <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{p.name}</span>
+                                <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{displayName(p)}</span>
                                 <span style={{ fontSize:11, color:"#9ab8a0" }}>Brkt <strong style={{ color:"#f0d060" }}>{bracketPts}</strong></span>
                                 <span style={{ fontSize:11, color:"#9ab8a0" }}>Props <strong style={{ color:"#f0d060" }}>{propPts}</strong></span>
                                 <span style={{ fontSize:11, color:"#9ab8a0" }}>GB <strong style={{ color:"#f0d060" }}>{gbPts}</strong></span>
@@ -3582,7 +3652,7 @@ export default function WorldCupPool() {
                     borderColor:viewingPlayer?.id===p.id?"#f0d060":"rgba(200,168,75,0.3)",
                     background:viewingPlayer?.id===p.id?"rgba(200,168,75,0.25)":"rgba(200,168,75,0.08)",
                     color:"#f0d060", cursor:"pointer", fontSize:13,
-                  }}>{p.name}</button>
+                  }}>{displayName(p)}</button>
               ))}
             </div>
 
@@ -3724,7 +3794,7 @@ export default function WorldCupPool() {
                         <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i===3?"4️⃣":i===4?"5️⃣":`#${i+1}`}</div>
                         <div style={{ flex:1 }}>
                           <div style={{ fontSize:15, color:i===0?"#f0d060":"#f0e6c8", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                            {p.name}
+                            {displayName(p)}
                             {paid[p.id] && <span style={{ fontSize:9, background:"rgba(100,200,100,0.2)", color:"#8fffb0", borderRadius:4, padding:"1px 5px" }}>paid {paid[p.id+"_method"]==="cash"?"💵":"💸"}</span>}
                             {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
                             {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
@@ -3786,7 +3856,7 @@ export default function WorldCupPool() {
                         <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i===3?"4️⃣":i===4?"5️⃣":`#${i+1}`}</div>
                         <div style={{ flex:1 }}>
                           <div style={{ fontSize:15, color:i===0?"#f0d060":"#f0e6c8", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                            {p.name}
+                            {displayName(p)}
                             {paid[p.id] && <span style={{ fontSize:9, background:"rgba(100,200,100,0.2)", color:"#8fffb0", borderRadius:4, padding:"1px 5px" }}>paid {paid[p.id+"_method"]==="cash"?"💵":"💸"}</span>}
                             {!paid[p.id] && <span style={{ fontSize:9, background:"rgba(200,60,60,0.2)", color:"#ff9090", borderRadius:4, padding:"1px 5px" }}>unpaid</span>}
                             {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
@@ -3820,7 +3890,7 @@ export default function WorldCupPool() {
                   {leaderboard.map((p, i) => (
                     <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"5px 0" }}>
                       <div style={{ width:10, height:10, borderRadius:"50%", background: PLAYER_COLORS[players.findIndex(pl=>pl.id===p.id) % PLAYER_COLORS.length], flexShrink:0 }} />
-                      <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {p.name}</div>
+                      <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {displayName(p)}</div>
                       <div style={{ fontSize:16, fontWeight:"bold", color:"#f0d060" }}>{p.pts} pts</div>
                     </div>
                   ))}
@@ -3844,7 +3914,7 @@ export default function WorldCupPool() {
                       {[...leaderboard].sort((a,b) => b.pts2 - a.pts2).map((p, i) => (
                         <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"5px 0" }}>
                           <div style={{ width:10, height:10, borderRadius:"50%", background: PLAYER_COLORS[players.findIndex(pl=>pl.id===p.id) % PLAYER_COLORS.length], flexShrink:0 }} />
-                          <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {p.name}</div>
+                          <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {displayName(p)}</div>
                           <div style={{ fontSize:16, fontWeight:"bold", color:"#c8a84b" }}>{p.pts2} pts</div>
                         </div>
                       ))}
@@ -3867,7 +3937,7 @@ export default function WorldCupPool() {
                     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
                       {players.map(p => (
                         <button key={p.id} onClick={() => setH2hPlayerA(h2hPlayerA?.id===p.id?null:p)} style={{ padding:"7px 10px", borderRadius:6, border:"1px solid", textAlign:"left", cursor:"pointer", borderColor:h2hPlayerA?.id===p.id?"#f0d060":"rgba(255,255,255,0.1)", background:h2hPlayerA?.id===p.id?"rgba(200,168,75,0.2)":"rgba(255,255,255,0.04)", color:h2hPlayerA?.id===p.id?"#f0d060":"#c8b8a0", fontSize:12 }}>
-                          {p.name}
+                          {displayName(p)}
                         </button>
                       ))}
                     </div>
@@ -3877,7 +3947,7 @@ export default function WorldCupPool() {
                     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
                       {players.map(p => (
                         <button key={p.id} onClick={() => setH2hPlayerB(h2hPlayerB?.id===p.id?null:p)} style={{ padding:"7px 10px", borderRadius:6, border:"1px solid", textAlign:"left", cursor:"pointer", borderColor:h2hPlayerB?.id===p.id?"#60c0ff":"rgba(255,255,255,0.1)", background:h2hPlayerB?.id===p.id?"rgba(96,192,255,0.2)":"rgba(255,255,255,0.04)", color:h2hPlayerB?.id===p.id?"#60c0ff":"#c8b8a0", fontSize:12 }}>
-                          {p.name}
+                          {displayName(p)}
                         </button>
                       ))}
                     </div>
