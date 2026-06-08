@@ -18,6 +18,7 @@ async function dbLoad() {
     liveP2Props: data.liveP2Props || null,
     liveResults: data.liveResults || null,
     livePhase2: data.livePhase2 || null,
+    adminOverrides: data.adminOverrides || {},
   };
 }
 
@@ -91,7 +92,7 @@ async function toggleReaction(msgId, emoji, playerName) {
 
 // ── HOT TAKES ────────────────────────────────────────────────────────────────
 // ── AUTH HELPERS ─────────────────────────────────────────────────────────────
-const ADMIN = { name: "admin", password: "admin" };
+const ADMIN = { name: "admin", password: "admindyjs" };
 const SITE_PASSWORD = "powerwc";
 
 function hashPassword(pw) {
@@ -1677,7 +1678,7 @@ export default function WorldCupPool() {
 
   const [liveResults, setLiveResults]     = useState(null);
   const [livePhase2, setLivePhase2]       = useState(null);
-  const adminOverrideRef                  = useRef(false);
+  const [adminOverrides, setAdminOverrides] = useState({});
   const [adminTab, setAdminTab]           = useState("settings");
   const [auditPhase, setAuditPhase]       = useState("p1");
   const [expandedBreakdown, setExpandedBreakdown] = useState({});
@@ -1720,6 +1721,7 @@ export default function WorldCupPool() {
         if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
         if (data.liveResults) setLiveResults(data.liveResults);
         if (data.livePhase2) setLivePhase2(data.livePhase2);
+        if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
         const def = { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] };
         const s = data.settings || def;
         setSettings(s);
@@ -1776,6 +1778,7 @@ export default function WorldCupPool() {
         if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
         if (data.liveResults) setLiveResults(data.liveResults);
         if (data.livePhase2) setLivePhase2(data.livePhase2);
+        if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
       }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
@@ -1801,8 +1804,18 @@ export default function WorldCupPool() {
         });
       }
       setPrevPropResults(r.propResults || []);
-      setLiveResults(r); setLastFetched(new Date()); setFetchStatus("done");
-      if (!adminOverrideRef.current) { try { await dbPatch("liveResults", r); } catch {} }
+      // Merge API result with any admin-overridden cells before persisting
+      const mergedGroupRankings = { ...(r.groupRankings || {}) };
+      Object.keys(mergedGroupRankings).forEach(g => {
+        if (adminOverrides["groupRankings_"+g]) mergedGroupRankings[g] = liveResults?.groupRankings?.[g] || mergedGroupRankings[g];
+      });
+      const mergedPropResults = [...(r.propResults || [])];
+      mergedPropResults.forEach((_, i) => {
+        if (adminOverrides["propResults_"+i] && liveResults?.propResults?.[i] !== undefined) mergedPropResults[i] = liveResults.propResults[i];
+      });
+      const mergedLiveResults = { ...r, groupRankings: mergedGroupRankings, propResults: mergedPropResults };
+      setLiveResults(mergedLiveResults); setLastFetched(new Date()); setFetchStatus("done");
+      try { await dbPatch("liveResults", mergedLiveResults); } catch {}
 
       // ── P2: only after group stage opens ──
       if (isPhase2Open()) {
@@ -1833,13 +1846,21 @@ export default function WorldCupPool() {
           const p2 = await fetchLivePhase2();
           if (p2) {
             if (p2.knockoutWinners) {
-              setLivePhase2(p2.knockoutWinners);
-              if (!adminOverrideRef.current) { try { await dbPatch("livePhase2", p2.knockoutWinners); } catch {} }
+              const mergedPhase2 = { ...p2.knockoutWinners };
+              Object.keys(mergedPhase2).forEach(matchId => {
+                if (adminOverrides["livePhase2_"+matchId] && livePhase2?.[matchId] !== undefined) mergedPhase2[matchId] = livePhase2[matchId];
+              });
+              setLivePhase2(mergedPhase2);
+              try { await dbPatch("livePhase2", mergedPhase2); } catch {}
             }
 
             if (p2.p2PropResults) {
-              setLiveP2Props(p2.p2PropResults);
-              await dbPatch("liveP2Props", p2.p2PropResults);
+              const mergedP2Props = { ...p2.p2PropResults };
+              Object.keys(mergedP2Props).forEach(propId => {
+                if (adminOverrides["liveP2Props_"+propId] && liveP2Props?.[propId] !== undefined) mergedP2Props[propId] = liveP2Props[propId];
+              });
+              setLiveP2Props(mergedP2Props);
+              await dbPatch("liveP2Props", mergedP2Props);
             }
 
             // Update golden boot winner once known
@@ -3035,16 +3056,27 @@ export default function WorldCupPool() {
                 color: auditPhase===ph ? "#f0d060" : "#9ab8a0", fontWeight: auditPhase===ph ? "bold" : "normal",
               });
 
-              // Helper: save updated liveResults and mark override active
-              const patchLiveResults = async (updated) => {
-                adminOverrideRef.current = true;
+              // Per-cell override helpers
+              const setOverride = async (key) => {
+                const updated = { ...adminOverrides, [key]: true };
+                setAdminOverrides(updated);
+                await dbPatch("adminOverrides", updated);
+              };
+              const clearOverride = async (key) => {
+                const updated = { ...adminOverrides };
+                delete updated[key];
+                setAdminOverrides(updated);
+                await dbPatch("adminOverrides", updated);
+              };
+              const patchLiveResults = async (updated, overrideKey) => {
                 setLiveResults(updated);
                 await dbPatch("liveResults", updated);
+                if (overrideKey) await setOverride(overrideKey);
               };
-              const patchLivePhase2 = async (updated) => {
-                adminOverrideRef.current = true;
+              const patchLivePhase2 = async (updated, overrideKey) => {
                 setLivePhase2(updated);
                 await dbPatch("livePhase2", updated);
+                if (overrideKey) await setOverride(overrideKey);
               };
 
               // P1 score breakdown per player
@@ -3104,11 +3136,11 @@ export default function WorldCupPool() {
 
               return (
                 <div>
-                  {/* Override active banner */}
-                  {adminOverrideRef.current && (
-                    <div style={{ background:"rgba(255,160,50,0.15)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                      <span>⚠️ Manual override active — auto-fetch will not overwrite Firebase until you clear this.</span>
-                      <button onClick={() => { adminOverrideRef.current = false; }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear Override</button>
+                  {/* Override summary banner */}
+                  {Object.keys(adminOverrides).length > 0 && (
+                    <div style={{ background:"rgba(255,160,50,0.12)", border:"1px solid rgba(255,160,50,0.35)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <span>🔒 {Object.keys(adminOverrides).length} cell{Object.keys(adminOverrides).length>1?"s":""} manually overridden — auto-fetch will not overwrite these cells.</span>
+                      <button onClick={async () => { setAdminOverrides({}); await dbPatch("adminOverrides", {}); }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All</button>
                     </div>
                   )}
 
@@ -3130,7 +3162,12 @@ export default function WorldCupPool() {
                             const teams = TEAMS_BY_GROUP[g];
                             return (
                               <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"8px 10px" }}>
-                                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>GROUP {g}</div>
+                                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
+                                  GROUP {g}
+                                  {adminOverrides["groupRankings_"+g] && (
+                                    <button onClick={() => clearOverride("groupRankings_"+g)} title="Clear override" style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:3, padding:"1px 5px", color:"#ffb060", cursor:"pointer", fontSize:9 }}>🔒 clear</button>
+                                  )}
+                                </div>
                                 {[0,1,2,3].map(idx => {
                                   const isEditing = editingGroup?.g === g && editingGroup?.idx === idx;
                                   const team = actual[idx];
@@ -3145,9 +3182,10 @@ export default function WorldCupPool() {
                                             {teams.map(t => <option key={t} value={t}>{t}</option>)}
                                           </select>
                                           <button onClick={async () => {
-                                            const updated = { ...liveResults, groupRankings: { ...(liveResults?.groupRankings||{}), [g]: [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actual[i]||null)) } };
+                                            const newRanking = [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actual[i]||null));
+                                            const updated = { ...liveResults, groupRankings: { ...(liveResults?.groupRankings||{}), [g]: newRanking } };
                                             setEditingGroup(null);
-                                            await patchLiveResults(updated);
+                                            await patchLiveResults(updated, "groupRankings_"+g);
                                           }} style={{ ...S.btn, fontSize:10, padding:"2px 8px" }}>✓</button>
                                           <button onClick={() => setEditingGroup(null)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:4, padding:"2px 6px", color:"#9ab8a0", cursor:"pointer", fontSize:10 }}>✕</button>
                                         </div>
@@ -3176,7 +3214,7 @@ export default function WorldCupPool() {
                           return (
                             <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
                               <span style={{ fontSize:10, color:"#9ab8a0", minWidth:36 }}>{prop.date}</span>
-                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}…</span>
+                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}… {adminOverrides["propResults_"+i] && <span style={{ color:"#ffb060", fontSize:9 }}>🔒</span>}</span>
                               <div style={{ display:"flex", gap:4 }}>
                                 {[true, false, null].map(val => {
                                   const label = val===true?"YES":val===false?"NO":"—";
@@ -3186,7 +3224,8 @@ export default function WorldCupPool() {
                                       const newPropResults = [...(liveResults?.propResults || Array(34).fill(null))];
                                       newPropResults[i] = val;
                                       const updated = { ...liveResults, propResults: newPropResults };
-                                      await patchLiveResults(updated);
+                                      await patchLiveResults(updated, val===null ? null : "propResults_"+i);
+                                      if (val===null) await clearOverride("propResults_"+i);
                                     }} style={{
                                       padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
                                       borderColor: active ? (val===true?"#8fffb0":val===false?"#ff9090":"rgba(255,255,255,0.3)") : "rgba(255,255,255,0.1)",
@@ -3340,7 +3379,7 @@ export default function WorldCupPool() {
                               const winner = livePhase2?.[match.id];
                               return (
                                 <div key={match.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
-                                  <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label}</span>
+                                  <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label} {adminOverrides["livePhase2_"+match.id] && <span style={{ color:"#ffb060", fontSize:9 }}>🔒</span>}</span>
                                   <div style={{ display:"flex", gap:4, flex:1 }}>
                                     {[teamA, teamB, null].map((team, ti) => {
                                       const label = team===null ? "—" : team;
@@ -3348,7 +3387,8 @@ export default function WorldCupPool() {
                                       return (
                                         <button key={ti} onClick={async () => {
                                           const updated = { ...(livePhase2||{}), [match.id]: team };
-                                          await patchLivePhase2(updated);
+                                          await patchLivePhase2(updated, team===null ? null : "livePhase2_"+match.id);
+                                          if (team===null) await clearOverride("livePhase2_"+match.id);
                                         }} style={{
                                           padding:"3px 8px", borderRadius:4, border:"1px solid", fontSize:10, cursor:"pointer",
                                           borderColor: active ? "#8fffb0" : "rgba(255,255,255,0.1)",
@@ -3374,7 +3414,7 @@ export default function WorldCupPool() {
                           return (
                             <div key={prop.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
                               <span style={{ fontSize:10, color:"#f0d060", minWidth:28 }}>{prop.round.toUpperCase()}</span>
-                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}…</span>
+                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}… {adminOverrides["liveP2Props_"+prop.id] && <span style={{ color:"#ffb060", fontSize:9 }}>🔒</span>}</span>
                               <div style={{ display:"flex", gap:4 }}>
                                 {[true, false, null].map(val => {
                                   const label = val===true?"YES":val===false?"NO":"—";
@@ -3382,9 +3422,10 @@ export default function WorldCupPool() {
                                   return (
                                     <button key={label} onClick={async () => {
                                       const updated = { ...(liveP2Props||{}), [prop.id]: val };
-                                      adminOverrideRef.current = true;
                                       setLiveP2Props(updated);
                                       await dbPatch("liveP2Props", updated);
+                                      if (val===null) { await clearOverride("liveP2Props_"+prop.id); }
+                                      else { await setOverride("liveP2Props_"+prop.id); }
                                     }} style={{
                                       padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
                                       borderColor: active ? (val===true?"#8fffb0":val===false?"#ff9090":"rgba(255,255,255,0.3)") : "rgba(255,255,255,0.1)",
