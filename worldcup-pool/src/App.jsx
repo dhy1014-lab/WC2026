@@ -7,7 +7,7 @@ async function dbLoad() {
   const r = await fetch(`${DB_URL}/pool.json`);
   if (!r.ok) throw new Error(`Firebase error ${r.status}`);
   const data = await r.json();
-  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] }, goldenBoot: null, bracketSlots: null, liveP2Props: null };
+  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] }, goldenBoot: null, bracketSlots: null, liveP2Props: null, liveResults: null, livePhase2: null };
   return {
     players: data.players || [],
     predictions: data.predictions || {},
@@ -16,6 +16,8 @@ async function dbLoad() {
     goldenBoot: data.goldenBoot || null,
     bracketSlots: data.bracketSlots || null,
     liveP2Props: data.liveP2Props || null,
+    liveResults: data.liveResults || null,
+    livePhase2: data.livePhase2 || null,
   };
 }
 
@@ -1675,6 +1677,14 @@ export default function WorldCupPool() {
 
   const [liveResults, setLiveResults]     = useState(null);
   const [livePhase2, setLivePhase2]       = useState(null);
+  const adminOverrideRef                  = useRef(false);
+  const [adminTab, setAdminTab]           = useState("settings");
+  const [auditPhase, setAuditPhase]       = useState("p1");
+  const [expandedBreakdown, setExpandedBreakdown] = useState({});
+  const [editingGroup, setEditingGroup]   = useState(null);
+  const [editingGroupVal, setEditingGroupVal] = useState("");
+  const [editBracketSlot, setEditBracketSlot] = useState(null);
+  const [editBracketSlotVal, setEditBracketSlotVal] = useState("");
   const [bracketSlots, setBracketSlots]   = useState(null); // { "1A": "Mexico", "2A": "South Africa", ... }
   const [fetchStatus, setFetchStatus]     = useState("idle");
   const [fetchError, setFetchError]       = useState("");
@@ -1708,6 +1718,8 @@ export default function WorldCupPool() {
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
         if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+        if (data.liveResults) setLiveResults(data.liveResults);
+        if (data.livePhase2) setLivePhase2(data.livePhase2);
         const def = { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] };
         const s = data.settings || def;
         setSettings(s);
@@ -1762,6 +1774,8 @@ export default function WorldCupPool() {
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
         if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+        if (data.liveResults) setLiveResults(data.liveResults);
+        if (data.livePhase2) setLivePhase2(data.livePhase2);
       }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
@@ -1788,6 +1802,7 @@ export default function WorldCupPool() {
       }
       setPrevPropResults(r.propResults || []);
       setLiveResults(r); setLastFetched(new Date()); setFetchStatus("done");
+      if (!adminOverrideRef.current) { try { await dbPatch("liveResults", r); } catch {} }
 
       // ── P2: only after group stage opens ──
       if (isPhase2Open()) {
@@ -1817,7 +1832,10 @@ export default function WorldCupPool() {
         try {
           const p2 = await fetchLivePhase2();
           if (p2) {
-            if (p2.knockoutWinners) setLivePhase2(p2.knockoutWinners);
+            if (p2.knockoutWinners) {
+              setLivePhase2(p2.knockoutWinners);
+              if (!adminOverrideRef.current) { try { await dbPatch("livePhase2", p2.knockoutWinners); } catch {} }
+            }
 
             if (p2.p2PropResults) {
               setLiveP2Props(p2.p2PropResults);
@@ -2891,191 +2909,89 @@ export default function WorldCupPool() {
         {/* ── ADMIN ── */}
         {screen==="admin" && isAdmin && (
           <div>
+            {/* Header */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>⚙️ Admin Panel</h2>
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={exportCSV} style={{ ...S.btn, fontSize:11, padding:"6px 12px" }}>⬇️ Export CSV</button>
-                <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
-              </div>
+              <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
             </div>
-            {/* Pool settings */}
-            <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>💰 POOL SETTINGS</div>
 
-              {/* Entry fee + commissioner cut */}
-              <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:14 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Entry fee $</label>
-                  <input type="number" min="0" value={editFee} onChange={e => setEditFee(e.target.value)} style={{ ...S.input, width:64, padding:"4px 8px", fontSize:13 }} />
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Commissioner cut $</label>
-                  <input type="number" min="0" value={editComm} onChange={e => setEditComm(e.target.value)} style={{ ...S.input, width:64, padding:"4px 8px", fontSize:13 }} />
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <label style={{ fontSize:12, color:"#f0e6c8" }}>Phase 1 split %</label>
-                  <input type="number" min="0" max="100" value={editP1Split} onChange={e => setEditP1Split(e.target.value)} style={{ ...S.input, width:56, padding:"4px 8px", fontSize:13 }} />
-                  <span style={{ fontSize:11, color:"#9ab8a0" }}>/ P2: {100 - (parseInt(editP1Split)||0)}%</span>
-                </div>
-              </div>
+            {/* Tab bar */}
+            <div style={{ display:"flex", gap:4, marginBottom:16 }}>
+              {[["settings","⚙️ Settings"],["audit","📋 Results Audit"],["players","👥 Players"]].map(([key,label]) => (
+                <button key={key} onClick={() => setAdminTab(key)} style={{
+                  flex:1, padding:"8px 4px", borderRadius:6, border:"1px solid",
+                  borderColor: adminTab===key ? "#f0d060" : "rgba(255,255,255,0.12)",
+                  background: adminTab===key ? "rgba(240,208,96,0.15)" : "rgba(255,255,255,0.04)",
+                  color: adminTab===key ? "#f0d060" : "#9ab8a0", cursor:"pointer", fontSize:11, fontWeight: adminTab===key?"bold":"normal",
+                }}>{label}</button>
+              ))}
+            </div>
 
-              {/* Payout % editors */}
-              {[["Phase 1 Payouts", editPayouts1, setEditPayouts1], ["Phase 2 Payouts", editPayouts2, setEditPayouts2]].map(([label, pcts, setPcts]) => {
-                const total = pcts.reduce((s, v) => s + (parseFloat(v)||0), 0);
-                const over = total > 100;
-                return (
-                  <div key={label} style={{ marginBottom:12 }}>
-                    <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{label} <span style={{ color: over?"#ff9090":"#9ab8a0", fontWeight:"normal" }}>({total}% of distributable{over?" — over 100%!":""})</span></div>
-                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                      {["🥇","🥈","🥉","4th","5th"].map((medal, i) => (
-                        <div key={i} style={{ display:"flex", alignItems:"center", gap:4 }}>
-                          <span style={{ fontSize:12 }}>{medal}</span>
-                          <input type="number" min="0" max="100" value={pcts[i]} onChange={e => { const n=[...pcts]; n[i]=e.target.value; setPcts(n); }} style={{ ...S.input, width:52, padding:"3px 6px", fontSize:12, textAlign:"center" }} />
-                          <span style={{ fontSize:11, color:"#9ab8a0" }}>%</span>
-                        </div>
-                      ))}
+            {/* ── SETTINGS TAB ── */}
+            {adminTab==="settings" && (
+              <div style={S.card}>
+                <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>💰 POOL SETTINGS</div>
+                <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginBottom:14 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <label style={{ fontSize:12, color:"#f0e6c8" }}>Entry fee $</label>
+                    <input type="number" min="0" value={editFee} onChange={e => setEditFee(e.target.value)} style={{ ...S.input, width:64, padding:"4px 8px", fontSize:13 }} />
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <label style={{ fontSize:12, color:"#f0e6c8" }}>Commissioner cut $</label>
+                    <input type="number" min="0" value={editComm} onChange={e => setEditComm(e.target.value)} style={{ ...S.input, width:64, padding:"4px 8px", fontSize:13 }} />
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <label style={{ fontSize:12, color:"#f0e6c8" }}>Phase 1 split %</label>
+                    <input type="number" min="0" max="100" value={editP1Split} onChange={e => setEditP1Split(e.target.value)} style={{ ...S.input, width:56, padding:"4px 8px", fontSize:13 }} />
+                    <span style={{ fontSize:11, color:"#9ab8a0" }}>/ P2: {100 - (parseInt(editP1Split)||0)}%</span>
+                  </div>
+                </div>
+                {[["Phase 1 Payouts", editPayouts1, setEditPayouts1], ["Phase 2 Payouts", editPayouts2, setEditPayouts2]].map(([label, pcts, setPcts]) => {
+                  const total = pcts.reduce((s, v) => s + (parseFloat(v)||0), 0);
+                  const over = total > 100;
+                  return (
+                    <div key={label} style={{ marginBottom:12 }}>
+                      <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{label} <span style={{ color: over?"#ff9090":"#9ab8a0", fontWeight:"normal" }}>({total}% of distributable{over?" — over 100%!":""})</span></div>
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                        {["🥇","🥈","🥉","4th","5th"].map((medal, i) => (
+                          <div key={i} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                            <span style={{ fontSize:12 }}>{medal}</span>
+                            <input type="number" min="0" max="100" value={pcts[i]} onChange={e => { const n=[...pcts]; n[i]=e.target.value; setPcts(n); }} style={{ ...S.input, width:52, padding:"3px 6px", fontSize:12, textAlign:"center" }} />
+                            <span style={{ fontSize:11, color:"#9ab8a0" }}>%</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-
-              <button onClick={async () => {
-                const s = {
-                  entryFee: parseFloat(editFee)||0,
-                  commCut: parseFloat(editComm)||0,
-                  p1Split: parseFloat(editP1Split)||50,
-                  payouts1: editPayouts1.map(v => parseFloat(v)||0),
-                  payouts2: editPayouts2.map(v => parseFloat(v)||0),
-                };
-                setSettings(s);
-                await dbSave(players, predictions, paid, s);
-              }} style={{ ...S.btn, fontSize:11, padding:"6px 16px" }}>💾 Save Settings</button>
-
-              {/* Live summary */}
-              {(() => {
-                const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
-                const entryFee = settings.entryFee || 25;
-                const refund = Math.min(entryFee, pot1);
-                return (
-                  <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10, lineHeight:1.8 }}>
-                    <div>{paidCount} paid · collected <strong style={{ color:"#f0d060" }}>${total}</strong> · commissioner <strong style={{ color:"#ff9090" }}>−${commCut}</strong> · distributable <strong style={{ color:"#8fffb0" }}>${total - commCut}</strong></div>
-                    <div>Phase 1 pot <strong style={{ color:"#f0d060" }}>${pot1}</strong> · Phase 2 pot <strong style={{ color:"#f0d060" }}>${pot2}</strong></div>
-                    {paidCount >= 2 && <div style={{ color:"#aab0ff" }}>Last place refund <strong>${entryFee}</strong> per phase</div>}
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* P2 Auto-fetch status + overrides */}
-            <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>⚙️ PHASE 2 — AUTO-FETCH STATUS & OVERRIDES</div>
-
-              {/* Bracket slots */}
-              <div style={{ marginBottom:16 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6 }}>
-                  🏟️ Bracket Slots {bracketSlots ? <span style={{ color:"#8fffb0" }}>✓ Fetched</span> : <span style={{ color:"#aab0ff" }}>⏳ Pending (auto-fetches after group stage ends)</span>}
-                </div>
-                {bracketSlots && (
-                  <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
-                    {Object.entries(bracketSlots).map(([slot, team]) => (
-                      <div key={slot} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"3px 8px", fontSize:10 }}>
-                        <span style={{ color:"#f0d060" }}>{slot}:</span> <span style={{ color: team?"#f0e6c8":"#555" }}>{team||"null"}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display:"flex", gap:8 }}>
-                  <button onClick={async () => {
-                    setFetchStatus("loading");
-                    try {
-                      const slots = await fetchBracketSlots();
-                      if (slots) { setBracketSlots(slots); await dbPatch("bracketSlots", slots); }
-                      setFetchStatus("done");
-                    } catch(e) { setFetchStatus("error"); }
-                  }} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>🔄 Re-fetch Slots</button>
-                  <button onClick={async () => {
-                    const raw = window.prompt("Paste bracket slots JSON ({\"1A\":\"Mexico\",...}):");
-                    if (!raw) return;
-                    try {
-                      const slots = JSON.parse(raw);
-                      setBracketSlots(slots); await dbPatch("bracketSlots", slots);
-                      alert("✅ Bracket slots updated");
-                    } catch { alert("❌ Invalid JSON"); }
-                  }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 12px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✏️ Manual Override</button>
-                </div>
+                  );
+                })}
+                <button onClick={async () => {
+                  const s = { entryFee: parseFloat(editFee)||0, commCut: parseFloat(editComm)||0, p1Split: parseFloat(editP1Split)||50, payouts1: editPayouts1.map(v => parseFloat(v)||0), payouts2: editPayouts2.map(v => parseFloat(v)||0) };
+                  setSettings(s);
+                  await dbSave(players, predictions, paid, s);
+                }} style={{ ...S.btn, fontSize:11, padding:"6px 16px" }}>💾 Save Settings</button>
+                {(() => {
+                  const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
+                  const entryFee = settings.entryFee || 25;
+                  return (
+                    <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10, lineHeight:1.8 }}>
+                      <div>{paidCount} paid · collected <strong style={{ color:"#f0d060" }}>${total}</strong> · commissioner <strong style={{ color:"#ff9090" }}>−${commCut}</strong> · distributable <strong style={{ color:"#8fffb0" }}>${total - commCut}</strong></div>
+                      <div>Phase 1 pot <strong style={{ color:"#f0d060" }}>${pot1}</strong> · Phase 2 pot <strong style={{ color:"#f0d060" }}>${pot2}</strong></div>
+                      {paidCount >= 2 && <div style={{ color:"#aab0ff" }}>Last place refund <strong>${entryFee}</strong> per phase</div>}
+                    </div>
+                  );
+                })()}
               </div>
+            )}
 
-              {/* Golden Boot */}
-              <div style={{ marginBottom:16 }}>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6 }}>
-                  🥇 Golden Boot Options {goldenBoot?.options ? <span style={{ color:"#8fffb0" }}>✓ Fetched</span> : <span style={{ color:"#aab0ff" }}>⏳ Pending</span>}
-                  {goldenBoot?.answer && <span style={{ color:"#8fffb0", marginLeft:8 }}>· Winner: {goldenBoot.answer}</span>}
+            {/* ── PLAYERS TAB ── */}
+            {adminTab==="players" && (
+              <div style={S.card}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1 }}>PLAYERS — track payment & delete</div>
+                  <button onClick={exportCSV} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>⬇️ Export CSV</button>
                 </div>
-                {goldenBoot?.options && (
-                  <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
-                    {[...goldenBoot.options, { name:"Other", pts:20 }].map(o => (
-                      <div key={o.name} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"3px 8px", fontSize:10 }}>
-                        <span style={{ color:"#f0e6c8" }}>{o.name}</span> <span style={{ color:"#f0d060" }}>{o.pts}pts</span>
-                        {goldenBoot.answer === o.name && <span style={{ color:"#8fffb0" }}> ✓</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  <button onClick={async () => {
-                    setFetchStatus("loading");
-                    try {
-                      const gb = await fetchGoldenBootOptions();
-                      if (gb) { setGoldenBoot(gb); await dbPatch("goldenBoot", gb); }
-                      setFetchStatus("done");
-                    } catch(e) { setFetchStatus("error"); }
-                  }} style={{ ...S.btn, fontSize:11, padding:"5px 12px" }}>🔄 Re-fetch Golden Boot</button>
-                  <button onClick={async () => {
-                    const raw = window.prompt("Paste golden boot JSON ({\"options\":[{\"name\":\"...\",\"pts\":6}],\"answer\":null}):");
-                    if (!raw) return;
-                    try {
-                      const gb = JSON.parse(raw);
-                      setGoldenBoot(gb); await dbPatch("goldenBoot", gb);
-                      alert("✅ Golden Boot updated");
-                    } catch { alert("❌ Invalid JSON"); }
-                  }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 12px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✏️ Manual Override</button>
-                  {goldenBoot?.options && !goldenBoot?.answer && (
-                    <button onClick={async () => {
-                      const winner = window.prompt(`Set Golden Boot winner:\n${goldenBoot.options.map(o=>o.name).join(", ")}, Other`);
-                      if (!winner) return;
-                      const updated = { ...goldenBoot, answer: winner };
-                      setGoldenBoot(updated); await dbPatch("goldenBoot", updated);
-                    }} style={{ background:"rgba(100,200,100,0.2)", border:"1px solid rgba(100,200,100,0.4)", borderRadius:6, padding:"5px 12px", color:"#8fffb0", cursor:"pointer", fontSize:11 }}>🏆 Set Winner</button>
-                  )}
-                </div>
-              </div>
-
-              {/* P2 Props manual override */}
-              <div>
-                <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:6 }}>
-                  🎲 P2 Prop Results {liveP2Props ? <span style={{ color:"#8fffb0" }}>✓ {Object.values(liveP2Props).filter(v=>v!==null).length}/{P2_PROPS.length} settled</span> : <span style={{ color:"#aab0ff" }}>⏳ Pending</span>}
-                </div>
-                <div style={{ display:"flex", gap:8 }}>
-                  <button onClick={async () => {
-                    const raw = window.prompt("Paste P2 prop results JSON ({\"p2_r32_a\":true,\"p2_r32_b\":false,...}):");
-                    if (!raw) return;
-                    try {
-                      const results = JSON.parse(raw);
-                      setLiveP2Props(results); await dbPatch("liveP2Props", results);
-                      alert("✅ P2 props updated");
-                    } catch { alert("❌ Invalid JSON"); }
-                  }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"5px 12px", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✏️ Override P2 Props</button>
-                </div>
-              </div>
-            </div>
-
-            {/* Players + payment tracking */}
-            <div style={S.card}>
-              <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1 }}>PLAYERS — track payment & delete</div>
-              {players.length === 0 && <div style={{ color:"#9ab8a0", fontSize:12 }}>No players yet.</div>}
-              {players.map(p => {
-
-                return (
+                {players.length === 0 && <div style={{ color:"#9ab8a0", fontSize:12 }}>No players yet.</div>}
+                {players.map(p => (
                   <div key={p.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", gap:8, flexWrap:"wrap" }}>
                     <div style={{ flex:1 }}>
                       <span style={{ fontSize:14, color:"#f0e6c8" }}>{p.name}</span>
@@ -3088,13 +3004,8 @@ export default function WorldCupPool() {
                         return (
                           <button key={method} onClick={async () => {
                             const newPaid = { ...paid };
-                            if (method === "unpaid") {
-                              newPaid[p.id] = false;
-                              delete newPaid[p.id+"_method"];
-                            } else {
-                              newPaid[p.id] = true;
-                              newPaid[p.id+"_method"] = method;
-                            }
+                            if (method === "unpaid") { newPaid[p.id] = false; delete newPaid[p.id+"_method"]; }
+                            else { newPaid[p.id] = true; newPaid[p.id+"_method"] = method; }
                             setPaid(newPaid);
                             await dbSave(players, predictions, newPaid, settings);
                           }} style={{
@@ -3110,9 +3021,436 @@ export default function WorldCupPool() {
                       <button onClick={() => { if(window.confirm(`Delete ${p.name}?`)) deletePlayer(p.id); }} style={{ background:"rgba(200,60,60,0.2)", border:"1px solid rgba(200,60,60,0.4)", borderRadius:6, padding:"4px 10px", color:"#ff8080", cursor:"pointer", fontSize:12 }}>🗑</button>
                     </div>
                   </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── RESULTS AUDIT TAB ── */}
+            {adminTab==="audit" && (() => {
+              // Phase sub-tabs
+              const auditBtnStyle = (ph) => ({
+                padding:"6px 18px", borderRadius:6, border:"1px solid", cursor:"pointer", fontSize:12,
+                borderColor: auditPhase===ph ? "#f0d060" : "rgba(255,255,255,0.12)",
+                background: auditPhase===ph ? "rgba(240,208,96,0.15)" : "rgba(255,255,255,0.04)",
+                color: auditPhase===ph ? "#f0d060" : "#9ab8a0", fontWeight: auditPhase===ph ? "bold" : "normal",
+              });
+
+              // Helper: save updated liveResults and mark override active
+              const patchLiveResults = async (updated) => {
+                adminOverrideRef.current = true;
+                setLiveResults(updated);
+                await dbPatch("liveResults", updated);
+              };
+              const patchLivePhase2 = async (updated) => {
+                adminOverrideRef.current = true;
+                setLivePhase2(updated);
+                await dbPatch("livePhase2", updated);
+              };
+
+              // P1 score breakdown per player
+              const p1Breakdown = players.map(p => {
+                const pred = predictions[p.id] || {};
+                let groupPts = 0, propPts = 0;
+                const groupDetail = Object.keys(TEAMS_BY_GROUP).map(g => {
+                  const userR = pred.groupRankings?.[g];
+                  const actualR = liveResults?.groupRankings?.[g];
+                  const pts = calcGroupRankingPoints(userR, actualR);
+                  groupPts += pts;
+                  return { g, pts, userR, actualR };
+                });
+                const propDetail = DAILY_PROPS.map((prop, i) => {
+                  const pick = pred.propPicks?.[i];
+                  const actual = liveResults?.propResults?.[i];
+                  const settled = actual !== null && actual !== undefined;
+                  const won = settled && pick === actual;
+                  const pts = won ? (actual ? prop.ptsYes : prop.ptsNo) : 0;
+                  propPts += pts;
+                  return { i, prop, pick, actual, pts, won, settled };
+                });
+                return { p, groupPts, propPts, total: groupPts + propPts, groupDetail, propDetail };
+              }).sort((a,b) => b.total - a.total);
+
+              // P2 score breakdown per player
+              const p2Breakdown = players.map(p => {
+                const pred = predictions[p.id] || {};
+                let bracketPts = 0, propPts = 0, gbPts = 0;
+                const bracketDetail = Object.entries(ROUND_PTS).flatMap(([round, roundPts]) =>
+                  (KNOCKOUT_ROUNDS[round]||[]).map(match => {
+                    const pick = pred.phase2Picks?.[match.id];
+                    const actual = livePhase2?.[match.id];
+                    const won = pick && actual && pick === actual;
+                    if (won) bracketPts += roundPts;
+                    return { match, round, roundPts, pick, actual, won };
+                  })
                 );
-              })}
-            </div>
+                const propDetail = P2_PROPS.map(prop => {
+                  const pick = pred.p2PropPicks?.[prop.id];
+                  const actual = liveP2Props?.[prop.id];
+                  const settled = actual !== null && actual !== undefined;
+                  const won = settled && pick === actual;
+                  const pts = won ? (actual ? prop.ptsYes : prop.ptsNo) : 0;
+                  propPts += pts;
+                  return { prop, pick, actual, pts, won, settled };
+                });
+                // Golden boot
+                const gbPick = pred.goldenBootPick;
+                const gbAnswer = goldenBoot?.answer;
+                if (gbPick && gbAnswer && gbPick === gbAnswer) {
+                  const opt = gbPick === "Other" ? { pts: 20 } : goldenBoot?.options?.find(o => o.name === gbPick);
+                  if (opt) gbPts = opt.pts;
+                }
+                return { p, bracketPts, propPts, gbPts, total: bracketPts + propPts + gbPts, bracketDetail, propDetail };
+              }).sort((a,b) => b.total - a.total);
+
+              return (
+                <div>
+                  {/* Override active banner */}
+                  {adminOverrideRef.current && (
+                    <div style={{ background:"rgba(255,160,50,0.15)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <span>⚠️ Manual override active — auto-fetch will not overwrite Firebase until you clear this.</span>
+                      <button onClick={() => { adminOverrideRef.current = false; }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear Override</button>
+                    </div>
+                  )}
+
+                  {/* Phase tabs */}
+                  <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+                    <button style={auditBtnStyle("p1")} onClick={() => setAuditPhase("p1")}>Phase 1 — Group Stage</button>
+                    <button style={auditBtnStyle("p2")} onClick={() => setAuditPhase("p2")}>Phase 2 — Knockouts</button>
+                  </div>
+
+                  {/* ── P1 AUDIT ── */}
+                  {auditPhase==="p1" && (
+                    <div>
+                      {/* Group Results */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🏅 GROUP RESULTS — click a position to edit</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                          {Object.keys(TEAMS_BY_GROUP).map(g => {
+                            const actual = liveResults?.groupRankings?.[g] || [null,null,null,null];
+                            const teams = TEAMS_BY_GROUP[g];
+                            return (
+                              <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"8px 10px" }}>
+                                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>GROUP {g}</div>
+                                {[0,1,2,3].map(idx => {
+                                  const isEditing = editingGroup?.g === g && editingGroup?.idx === idx;
+                                  const team = actual[idx];
+                                  return (
+                                    <div key={idx} style={{ display:"flex", alignItems:"center", gap:4, marginBottom:3 }}>
+                                      <span style={{ fontSize:10, color:"#9ab8a0", width:14 }}>{idx+1}.</span>
+                                      {isEditing ? (
+                                        <div style={{ display:"flex", gap:4, flex:1 }}>
+                                          <select value={editingGroupVal} onChange={e => setEditingGroupVal(e.target.value)}
+                                            style={{ ...S.input, flex:1, fontSize:11, padding:"2px 4px" }}>
+                                            <option value="">— clear —</option>
+                                            {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                                          </select>
+                                          <button onClick={async () => {
+                                            const updated = { ...liveResults, groupRankings: { ...(liveResults?.groupRankings||{}), [g]: [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actual[i]||null)) } };
+                                            setEditingGroup(null);
+                                            await patchLiveResults(updated);
+                                          }} style={{ ...S.btn, fontSize:10, padding:"2px 8px" }}>✓</button>
+                                          <button onClick={() => setEditingGroup(null)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:4, padding:"2px 6px", color:"#9ab8a0", cursor:"pointer", fontSize:10 }}>✕</button>
+                                        </div>
+                                      ) : (
+                                        <div onClick={() => { setEditingGroup({g, idx}); setEditingGroupVal(team||""); }}
+                                          style={{ flex:1, fontSize:11, color: team?"#f0e6c8":"#555", cursor:"pointer", padding:"2px 6px", borderRadius:4, background:"rgba(255,255,255,0.03)", display:"flex", alignItems:"center", gap:4 }}>
+                                          {team ? <>{tf(team)} {team}</> : <span style={{ color:"#555" }}>—</span>}
+                                          <span style={{ marginLeft:"auto", fontSize:9, color:"#666" }}>✏️</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Prop Results */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🎲 PROP RESULTS — toggle to override</div>
+                        {DAILY_PROPS.map((prop, i) => {
+                          const actual = liveResults?.propResults?.[i];
+                          const settled = actual !== null && actual !== undefined;
+                          return (
+                            <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
+                              <span style={{ fontSize:10, color:"#9ab8a0", minWidth:36 }}>{prop.date}</span>
+                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}…</span>
+                              <div style={{ display:"flex", gap:4 }}>
+                                {[true, false, null].map(val => {
+                                  const label = val===true?"YES":val===false?"NO":"—";
+                                  const active = settled ? actual===val : val===null;
+                                  return (
+                                    <button key={label} onClick={async () => {
+                                      const newPropResults = [...(liveResults?.propResults || Array(34).fill(null))];
+                                      newPropResults[i] = val;
+                                      const updated = { ...liveResults, propResults: newPropResults };
+                                      await patchLiveResults(updated);
+                                    }} style={{
+                                      padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
+                                      borderColor: active ? (val===true?"#8fffb0":val===false?"#ff9090":"rgba(255,255,255,0.3)") : "rgba(255,255,255,0.1)",
+                                      background: active ? (val===true?"rgba(100,255,150,0.15)":val===false?"rgba(255,100,100,0.15)":"rgba(255,255,255,0.05)") : "rgba(255,255,255,0.03)",
+                                      color: active ? (val===true?"#8fffb0":val===false?"#ff9090":"#9ab8a0") : "#555",
+                                    }}>{label}</button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* P1 Score Breakdown */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>📊 P1 SCORE BREAKDOWN</div>
+                        {p1Breakdown.map(({ p, groupPts, propPts, total, groupDetail, propDetail }, rank) => {
+                          const expanded = expandedBreakdown["p1_"+p.id];
+                          return (
+                            <div key={p.id} style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", marginBottom:4 }}>
+                              <div onClick={() => setExpandedBreakdown(e => ({ ...e, ["p1_"+p.id]: !e["p1_"+p.id] }))}
+                                style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px", cursor:"pointer" }}>
+                                <span style={{ fontSize:12, color:"#f0d060", width:20 }}>#{rank+1}</span>
+                                <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{p.name}</span>
+                                <span style={{ fontSize:11, color:"#9ab8a0" }}>Grp <strong style={{ color:"#f0d060" }}>{groupPts}</strong></span>
+                                <span style={{ fontSize:11, color:"#9ab8a0" }}>Props <strong style={{ color:"#f0d060" }}>{propPts}</strong></span>
+                                <span style={{ fontSize:14, fontWeight:"bold", color:"#8fffb0", minWidth:50, textAlign:"right" }}>{total} pts</span>
+                                <span style={{ fontSize:10, color:"#666" }}>{expanded?"▼":"▶"}</span>
+                              </div>
+                              {expanded && (
+                                <div style={{ paddingLeft:28, paddingBottom:8 }}>
+                                  <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>Groups</div>
+                                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:3, marginBottom:8 }}>
+                                    {groupDetail.map(({ g, pts, userR, actualR }) => (
+                                      <div key={g} style={{ fontSize:10, color: pts>0?"#8fffb0":"#9ab8a0" }}>
+                                        Group {g}: <strong>{pts}pts</strong>
+                                        {pts===0 && actualR && <span style={{ color:"#555" }}> (0/{4*6})</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>Props</div>
+                                  {propDetail.map(({ i, prop, pick, actual, pts, won, settled }) => (
+                                    settled ? (
+                                      <div key={i} style={{ display:"flex", gap:6, fontSize:10, padding:"2px 0", color: won?"#8fffb0":pick!==null&&pick!==undefined?"#ff9090":"#9ab8a0" }}>
+                                        <span style={{ minWidth:36 }}>{prop.date}</span>
+                                        <span style={{ flex:1 }}>{prop.q.substring(0,45)}…</span>
+                                        <span>{pick===null||pick===undefined?"—":pick?"YES":"NO"} → {actual?"YES":"NO"}</span>
+                                        <span style={{ minWidth:28, textAlign:"right" }}>{won?"+"+pts:"0"}</span>
+                                      </div>
+                                    ) : null
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── P2 AUDIT ── */}
+                  {auditPhase==="p2" && (
+                    <div>
+                      {/* Bracket Slots */}
+                      <div style={S.card}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                          <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1 }}>🏟️ BRACKET SLOTS {bracketSlots ? <span style={{ color:"#8fffb0" }}>✓</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}</div>
+                          <button onClick={async () => {
+                            setFetchStatus("loading");
+                            try { const slots = await fetchBracketSlots(); if (slots) { setBracketSlots(slots); await dbPatch("bracketSlots", slots); } setFetchStatus("done"); }
+                            catch { setFetchStatus("error"); }
+                          }} style={{ ...S.btn, fontSize:10, padding:"4px 10px" }}>🔄 Re-fetch</button>
+                        </div>
+                        {bracketSlots && (
+                          <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                            {Object.entries(bracketSlots).map(([slot, team]) => {
+                              const isEditing = editBracketSlot === slot;
+                              return (
+                                <div key={slot} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:4 }}>
+                                  <span style={{ color:"#f0d060", fontSize:10 }}>{slot}:</span>
+                                  {isEditing ? (
+                                    <>
+                                      <input value={editBracketSlotVal} onChange={e => setEditBracketSlotVal(e.target.value)}
+                                        style={{ ...S.input, width:100, padding:"2px 4px", fontSize:11 }} />
+                                      <button onClick={async () => {
+                                        const updated = { ...bracketSlots, [slot]: editBracketSlotVal };
+                                        setBracketSlots(updated); await dbPatch("bracketSlots", updated);
+                                        setEditBracketSlot(null);
+                                      }} style={{ ...S.btn, fontSize:10, padding:"2px 6px" }}>✓</button>
+                                      <button onClick={() => setEditBracketSlot(null)} style={{ background:"transparent", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✕</button>
+                                    </>
+                                  ) : (
+                                    <span onClick={() => { setEditBracketSlot(slot); setEditBracketSlotVal(team||""); }}
+                                      style={{ color: team?"#f0e6c8":"#555", cursor:"pointer" }}>
+                                      {team||"—"} <span style={{ fontSize:9, color:"#555" }}>✏️</span>
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {!bracketSlots && <div style={{ fontSize:11, color:"#9ab8a0" }}>Not yet fetched. Click Re-fetch after group stage ends.</div>}
+                      </div>
+
+                      {/* Golden Boot */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1 }}>🥾 GOLDEN BOOT {goldenBoot?.options ? <span style={{ color:"#8fffb0" }}>✓ options set</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}{goldenBoot?.answer && <span style={{ color:"#8fffb0" }}> · Winner: <strong>{goldenBoot.answer}</strong></span>}</div>
+                        <div style={{ display:"flex", gap:8, marginBottom:goldenBoot?.options?10:0 }}>
+                          <button onClick={async () => {
+                            setFetchStatus("loading");
+                            try { const gb = await fetchGoldenBootOptions(); if (gb) { setGoldenBoot(gb); await dbPatch("goldenBoot", gb); } setFetchStatus("done"); }
+                            catch { setFetchStatus("error"); }
+                          }} style={{ ...S.btn, fontSize:10, padding:"4px 10px" }}>🔄 Re-fetch Options</button>
+                        </div>
+                        {goldenBoot?.options && (
+                          <div>
+                            <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
+                              {[...goldenBoot.options, { name:"Other", pts:20 }].map(o => (
+                                <div key={o.name} style={{ background: goldenBoot.answer===o.name?"rgba(100,255,150,0.15)":"rgba(255,255,255,0.05)", border:"1px solid", borderColor: goldenBoot.answer===o.name?"rgba(100,255,150,0.4)":"transparent", borderRadius:4, padding:"3px 8px", fontSize:11 }}>
+                                  <span style={{ color:"#f0e6c8" }}>{o.name}</span> <span style={{ color:"#f0d060" }}>{o.pts}pts</span>
+                                  {goldenBoot.answer===o.name && <span style={{ color:"#8fffb0" }}> ✓</span>}
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                              <span style={{ fontSize:11, color:"#9ab8a0" }}>Set winner:</span>
+                              <select onChange={async e => {
+                                if (!e.target.value) return;
+                                const updated = { ...goldenBoot, answer: e.target.value };
+                                setGoldenBoot(updated); await dbPatch("goldenBoot", updated);
+                              }} value={goldenBoot.answer||""} style={{ ...S.input, fontSize:11, padding:"4px 8px" }}>
+                                <option value="">— not yet —</option>
+                                {[...goldenBoot.options, { name:"Other" }].map(o => <option key={o.name} value={o.name}>{o.name}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Bracket Match Results */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🏆 BRACKET MATCH RESULTS</div>
+                        {Object.entries(KNOCKOUT_ROUNDS).map(([round, matches]) => (
+                          <div key={round} style={{ marginBottom:14 }}>
+                            <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{ROUND_LABELS[round]} <span style={{ color:"#9ab8a0", fontWeight:"normal" }}>({ROUND_PTS[round]}pts)</span></div>
+                            {matches.map(match => {
+                              const teamA = bracketSlots?.[match.slotA] || match.slotA;
+                              const teamB = bracketSlots?.[match.slotB] || match.slotB;
+                              const winner = livePhase2?.[match.id];
+                              return (
+                                <div key={match.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
+                                  <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label}</span>
+                                  <div style={{ display:"flex", gap:4, flex:1 }}>
+                                    {[teamA, teamB, null].map((team, ti) => {
+                                      const label = team===null ? "—" : team;
+                                      const active = winner === team;
+                                      return (
+                                        <button key={ti} onClick={async () => {
+                                          const updated = { ...(livePhase2||{}), [match.id]: team };
+                                          await patchLivePhase2(updated);
+                                        }} style={{
+                                          padding:"3px 8px", borderRadius:4, border:"1px solid", fontSize:10, cursor:"pointer",
+                                          borderColor: active ? "#8fffb0" : "rgba(255,255,255,0.1)",
+                                          background: active ? "rgba(100,255,150,0.15)" : "rgba(255,255,255,0.03)",
+                                          color: active ? "#8fffb0" : team===null?"#555":"#c8b8a0",
+                                        }}>{label}</button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* P2 Prop Results */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🎲 P2 PROP RESULTS — toggle to override</div>
+                        {P2_PROPS.map(prop => {
+                          const actual = liveP2Props?.[prop.id];
+                          const settled = actual !== null && actual !== undefined;
+                          return (
+                            <div key={prop.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
+                              <span style={{ fontSize:10, color:"#f0d060", minWidth:28 }}>{prop.round.toUpperCase()}</span>
+                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}…</span>
+                              <div style={{ display:"flex", gap:4 }}>
+                                {[true, false, null].map(val => {
+                                  const label = val===true?"YES":val===false?"NO":"—";
+                                  const active = settled ? actual===val : val===null;
+                                  return (
+                                    <button key={label} onClick={async () => {
+                                      const updated = { ...(liveP2Props||{}), [prop.id]: val };
+                                      adminOverrideRef.current = true;
+                                      setLiveP2Props(updated);
+                                      await dbPatch("liveP2Props", updated);
+                                    }} style={{
+                                      padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
+                                      borderColor: active ? (val===true?"#8fffb0":val===false?"#ff9090":"rgba(255,255,255,0.3)") : "rgba(255,255,255,0.1)",
+                                      background: active ? (val===true?"rgba(100,255,150,0.15)":val===false?"rgba(255,100,100,0.15)":"rgba(255,255,255,0.05)") : "rgba(255,255,255,0.03)",
+                                      color: active ? (val===true?"#8fffb0":val===false?"#ff9090":"#9ab8a0") : "#555",
+                                    }}>{label}</button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* P2 Score Breakdown */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>📊 P2 SCORE BREAKDOWN</div>
+                        {p2Breakdown.map(({ p, bracketPts, propPts, gbPts, total, bracketDetail, propDetail }, rank) => {
+                          const expanded = expandedBreakdown["p2_"+p.id];
+                          return (
+                            <div key={p.id} style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", marginBottom:4 }}>
+                              <div onClick={() => setExpandedBreakdown(e => ({ ...e, ["p2_"+p.id]: !e["p2_"+p.id] }))}
+                                style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px", cursor:"pointer" }}>
+                                <span style={{ fontSize:12, color:"#f0d060", width:20 }}>#{rank+1}</span>
+                                <span style={{ fontSize:13, color:"#f0e6c8", flex:1 }}>{p.name}</span>
+                                <span style={{ fontSize:11, color:"#9ab8a0" }}>Brkt <strong style={{ color:"#f0d060" }}>{bracketPts}</strong></span>
+                                <span style={{ fontSize:11, color:"#9ab8a0" }}>Props <strong style={{ color:"#f0d060" }}>{propPts}</strong></span>
+                                <span style={{ fontSize:11, color:"#9ab8a0" }}>GB <strong style={{ color:"#f0d060" }}>{gbPts}</strong></span>
+                                <span style={{ fontSize:14, fontWeight:"bold", color:"#8fffb0", minWidth:50, textAlign:"right" }}>{total} pts</span>
+                                <span style={{ fontSize:10, color:"#666" }}>{expanded?"▼":"▶"}</span>
+                              </div>
+                              {expanded && (
+                                <div style={{ paddingLeft:28, paddingBottom:8 }}>
+                                  <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>Bracket</div>
+                                  {bracketDetail.filter(d => d.actual).map(({ match, round, roundPts, pick, actual, won }) => (
+                                    <div key={match.id} style={{ display:"flex", gap:6, fontSize:10, padding:"2px 0", color: won?"#8fffb0":pick?"#ff9090":"#9ab8a0" }}>
+                                      <span style={{ minWidth:60 }}>{ROUND_LABELS[round]}</span>
+                                      <span style={{ flex:1 }}>{match.label}</span>
+                                      <span>{pick||"—"} → {actual}</span>
+                                      <span style={{ minWidth:30, textAlign:"right" }}>{won?"+"+roundPts:"0"}</span>
+                                    </div>
+                                  ))}
+                                  <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginTop:6, marginBottom:4 }}>P2 Props</div>
+                                  {propDetail.filter(d => d.settled).map(({ prop, pick, actual, pts, won }) => (
+                                    <div key={prop.id} style={{ display:"flex", gap:6, fontSize:10, padding:"2px 0", color: won?"#8fffb0":pick!==null&&pick!==undefined?"#ff9090":"#9ab8a0" }}>
+                                      <span style={{ minWidth:28 }}>{prop.round.toUpperCase()}</span>
+                                      <span style={{ flex:1 }}>{prop.q.substring(0,45)}…</span>
+                                      <span>{pick===null||pick===undefined?"—":pick?"YES":"NO"} → {actual?"YES":"NO"}</span>
+                                      <span style={{ minWidth:28, textAlign:"right" }}>{won?"+"+pts:"0"}</span>
+                                    </div>
+                                  ))}
+                                  {gbPts > 0 && (
+                                    <div style={{ fontSize:10, color:"#8fffb0", marginTop:4 }}>🥾 Golden Boot: +{gbPts}pts</div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
           </div>
         )}
 
