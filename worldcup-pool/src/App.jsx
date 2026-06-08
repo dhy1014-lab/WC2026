@@ -1149,13 +1149,13 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
         {/* Score header */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", gap:8, marginBottom:16, alignItems:"center" }}>
           <div style={{ background:"rgba(200,168,75,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
-            <div style={{ fontSize:14, color:"#f0d060", fontWeight:"bold" }}>{displayName(playerA)}</div>
+            <div style={{ fontSize:14, color:"#f0d060", fontWeight:"bold" }}>{playerA.realName ? `${playerA.name} (${playerA.realName})` : playerA.name}</div>
             <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060" }}>{displayPtsA}</div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
           </div>
           <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center" }}>VS</div>
           <div style={{ background:"rgba(96,192,255,0.1)", borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
-            <div style={{ fontSize:14, color:"#60c0ff", fontWeight:"bold" }}>{displayName(playerB)}</div>
+            <div style={{ fontSize:14, color:"#60c0ff", fontWeight:"bold" }}>{playerB.realName ? `${playerB.name} (${playerB.realName})` : playerB.name}</div>
             <div style={{ fontSize:28, fontWeight:"bold", color:"#60c0ff" }}>{displayPtsB}</div>
             <div style={{ fontSize:10, color:"#9ab8a0" }}>pts</div>
           </div>
