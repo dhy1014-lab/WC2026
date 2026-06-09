@@ -1748,6 +1748,9 @@ export default function WorldCupPool() {
             } else {
               const player = data.players.find(p => p.id === saved.id);
               if (player) {
+                setCurrentPlayer(player);
+                try { localStorage.setItem("wc2026_session", JSON.stringify(player)); } catch {}
+                if (!player.realName) { setEditingRealName(""); setShowRealNamePrompt(true); }
                 const e = data.predictions[player.id] || {};
                 const lr1 = sanitizeGroupRankings(e.groupRankings);
           setGroupRankings(Object.keys(lr1).length > 0 ? lr1 : { A: TEAMS_BY_GROUP.A });
