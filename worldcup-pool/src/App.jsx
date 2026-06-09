@@ -1749,7 +1749,8 @@ export default function WorldCupPool() {
               const player = data.players.find(p => p.id === saved.id);
               if (player) {
                 const e = data.predictions[player.id] || {};
-                setGroupRankings(sanitizeGroupRankings(e.groupRankings));
+                const lr1 = sanitizeGroupRankings(e.groupRankings);
+          setGroupRankings(Object.keys(lr1).length > 0 ? lr1 : { A: TEAMS_BY_GROUP.A });
                 setPropPicks(e.propPicks || Array(34).fill(null));
                 setPhase2Picks(e.phase2Picks || {});
                 setP2PropPicks(e.p2PropPicks || {});
@@ -1939,7 +1940,8 @@ export default function WorldCupPool() {
     setIsAdmin(false);
     try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     const e = predictions[player.id] || {};
-    setGroupRankings(sanitizeGroupRankings(e.groupRankings));
+    const lr2 = sanitizeGroupRankings(e.groupRankings);
+    setGroupRankings(Object.keys(lr2).length > 0 ? lr2 : { A: TEAMS_BY_GROUP.A });
     setPropPicks(e.propPicks || Array(34).fill(null));
     setPhase2Picks(e.phase2Picks || {});
     setP2PropPicks(e.p2PropPicks || {});
@@ -2743,7 +2745,7 @@ export default function WorldCupPool() {
                 </div>
                 <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:14 }}>
                   {Object.keys(TEAMS_BY_GROUP).map(g => (
-                    <button key={g} style={S.pill(selGroup===g)} onClick={() => setSelGroup(g)}>
+                    <button key={g} style={S.pill(selGroup===g)} onClick={() => { setSelGroup(g); setGroupRankings(prev => prev[g] ? prev : { ...prev, [g]: TEAMS_BY_GROUP[g] }); }}>
                       Grp {g} {groupRankings[g] ? "✓" : ""}
                     </button>
                   ))}
