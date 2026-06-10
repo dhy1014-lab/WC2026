@@ -1832,7 +1832,7 @@ export default function WorldCupPool() {
                 if (!player.realName) { setEditingRealName(""); setShowRealNamePrompt(true); }
                 const e = data.predictions[player.id] || {};
                 const lr1 = sanitizeGroupRankings(e.groupRankings);
-          setGroupRankings(Object.keys(lr1).length > 0 ? lr1 : { A: TEAMS_BY_GROUP.A });
+                setGroupRankings(Object.keys(lr1).length > 0 ? lr1 : (Object.keys(e.groupRankings||{}).length > 0 ? e.groupRankings : { A: TEAMS_BY_GROUP.A }));
                 setPropPicks(e.propPicks || Array(34).fill(null));
                 setPhase2Picks(e.phase2Picks || {});
                 setP2PropPicks(e.p2PropPicks || {});
@@ -2037,7 +2037,7 @@ export default function WorldCupPool() {
     try { localStorage.setItem("wc2026_session", JSON.stringify(player)); localStorage.removeItem("wc2026_admin"); } catch {}
     const e = predictions[player.id] || {};
     const lr2 = sanitizeGroupRankings(e.groupRankings);
-    setGroupRankings(Object.keys(lr2).length > 0 ? lr2 : { A: TEAMS_BY_GROUP.A });
+    setGroupRankings(Object.keys(lr2).length > 0 ? lr2 : (Object.keys(e.groupRankings||{}).length > 0 ? e.groupRankings : { A: TEAMS_BY_GROUP.A }));
     setPropPicks(e.propPicks || Array(34).fill(null));
     setPhase2Picks(e.phase2Picks || {});
     setP2PropPicks(e.p2PropPicks || {});
@@ -2581,12 +2581,38 @@ export default function WorldCupPool() {
       </div>
 
       {/* Status bar */}
-      <div style={{ background:fetchStatus==="error"?"rgba(200,60,60,0.12)":"rgba(0,120,60,0.12)", padding:"5px 16px", fontSize:11, color:fetchStatus==="error"?"#ff8080":"#8fffb0", display:"flex", justifyContent:"space-between" }}>
+      <div style={{ background:fetchStatus==="error"?"rgba(200,60,60,0.12)":"rgba(0,120,60,0.12)", padding:"5px 16px", fontSize:11, color:fetchStatus==="error"?"#ff8080":"#8fffb0", display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:4 }}>
         <span>
           {fetchStatus==="loading" && "⏳ Fetching live results…"}
-          {fetchStatus==="done" && `✅ ${liveResults?.matchday||"Group Stage"} · ${Object.values(liveResults?.groupRankings||{}).filter(Boolean).length}/12 groups final · ${(liveResults?.propResults||[]).filter(v=>v!==null).length}/34 props settled`}
           {fetchStatus==="error" && `⚠️ ${fetchError}`}
           {fetchStatus==="idle" && "Initialising…"}
+          {fetchStatus==="done" && (() => {
+            const groupsDone = Object.values(liveResults?.groupRankings||{}).filter(Boolean).length;
+            const propsDone  = (liveResults?.propResults||[]).filter(v => v !== null).length;
+            const lockedProps = DAILY_PROPS.filter((_,i) => isPropLocked(i)).length;
+            const groupsOk = isGroupStageComplete() ? groupsDone === 12 : groupsDone > 0;
+            const propsOk  = lockedProps === 0 || propsDone >= lockedProps;
+
+            const p2BracketTotal = Object.values(KNOCKOUT_ROUNDS).flat().filter(m => {
+              const round = Object.entries(KNOCKOUT_ROUNDS).find(([,ms]) => ms.some(x => x.id===m.id))?.[0];
+              return round && isP2PropRoundLocked(round);
+            }).length;
+            const p2BracketDone = Object.entries(livePhase2||{}).filter(([k,v]) => k!=="finalFirstGoalMinute" && v !== null).length;
+            const p2PropsTotal  = P2_PROPS.filter(p => isP2PropRoundLocked(p.round)).length;
+            const p2PropsDoneCount = Object.values(liveP2Props||{}).filter(v => v !== null).length;
+            const p2BracketOk = p2BracketTotal === 0 || p2BracketDone >= p2BracketTotal;
+            const p2PropsOk   = p2PropsTotal === 0   || p2PropsDoneCount >= p2PropsTotal;
+
+            const parts = [
+              `${groupsOk ? "✅" : "⚠️"} Groups ${groupsDone}/12`,
+              `${propsOk  ? "✅" : "⚠️"} Props ${propsDone}/${lockedProps || 0}`,
+            ];
+            if (isPhase2Open()) {
+              parts.push(`${p2BracketOk ? "✅" : "⚠️"} Bracket ${p2BracketDone}/${p2BracketTotal}`);
+              parts.push(`${p2PropsOk   ? "✅" : "⚠️"} P2 Props ${p2PropsDoneCount}/${p2PropsTotal}`);
+            }
+            return parts.join("  ·  ");
+          })()}
         </span>
         {lastFetched && <span style={{ color:"#9ab8a0" }}>Updated {lastFetched.toLocaleTimeString()}</span>}
       </div>
