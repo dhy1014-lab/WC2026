@@ -2590,12 +2590,14 @@ export default function WorldCupPool() {
             const groupsDone = Object.values(liveResults?.groupRankings||{}).filter(Boolean).length;
             const lockedPropCount = DAILY_PROPS.filter((_,i) => isPropLocked(i)).length;
             const settledPropCount = (liveResults?.propResults||[]).filter((v,i) => isPropLocked(i) && v !== null).length;
-            const groupsOk = isGroupStageComplete() ? groupsDone === 12 : groupsDone > 0;
+            const propLabel = lockedPropCount > 0 ? `${settledPropCount}/${lockedPropCount}` : `0/${DAILY_PROPS.length}`;
+            const groupsComplete = isGroupStageComplete();
+            const groupsOk = !groupsComplete || groupsDone === 12;
             const propsOk  = lockedPropCount === 0 || settledPropCount >= lockedPropCount;
 
             const parts = [
               `${groupsOk ? "✅" : "⚠️"} Groups ${groupsDone}/12`,
-              `${propsOk  ? "✅" : "⚠️"} Props ${settledPropCount}/${lockedPropCount}`,
+              `${propsOk  ? "✅" : "⚠️"} Props ${propLabel}`,
             ];
 
             if (isPhase2Open()) {
@@ -4044,8 +4046,26 @@ export default function WorldCupPool() {
                             {prizes1[p.id] && prizes1[p.id] !== refund1 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>💰${prizes1[p.id]}</span>}
                           </div>
                           {(() => {
-                            const incomplete = (!pred) || grpDone < 12 || prpDone < 34;
-                            return <div style={{ fontSize:10, color: incomplete ? "#f0a020" : "#9ab8a0" }}>{incomplete ? "⚠️ " : "✓ "}{grpDone}/12 groups · {prpDone}/34 props</div>;
+                            const grpsLocked = isGroupRankingsLocked();
+                            const grpFlag = grpDone >= 12 ? "✅" : grpsLocked ? "🔒" : "⚠️";
+                            const grpColor = grpDone >= 12 ? "#9ab8a0" : grpsLocked ? "#9ab8a0" : "#f0a020";
+                            // For props: count only unlocked props they've answered
+                            const unlockedTotal = DAILY_PROPS.filter((_,i) => !isPropLocked(i)).length;
+                            const unlockedDone = pred ? (pred.propPicks||[]).filter((x,i) => x !== null && !isPropLocked(i)).length : 0;
+                            const allUnlockedDone = unlockedTotal === 0 || unlockedDone >= unlockedTotal;
+                            const prpFlag = allUnlockedDone ? "✅" : "⚠️";
+                            const prpColor = allUnlockedDone ? "#9ab8a0" : "#f0a020";
+                            const tbFlag = tbP1ok ? "✅" : isGroupRankingsLocked() ? "🔒" : "⚠️";
+                            const tbP1ok = pred?.tbP1 !== undefined && pred?.tbP1 !== null && pred?.tbP1 !== "";
+                            return (
+                              <div style={{ display:"flex", gap:8, fontSize:10, marginTop:2, flexWrap:"wrap" }}>
+                                <span style={{ color:grpColor }}>{grpFlag} {grpDone}/12 groups</span>
+                                <span style={{ color:"#555" }}>·</span>
+                                <span style={{ color:prpColor }}>{prpFlag} {unlockedDone}/{unlockedTotal || 34} props</span>
+                                <span style={{ color:"#555" }}>·</span>
+                                <span style={{ color: tbP1ok ? "#9ab8a0" : isGroupRankingsLocked() ? "#9ab8a0" : "#f0a020" }}>{tbP1ok ? "✅" : isGroupRankingsLocked() ? "🔒" : "⚠️"} TB</span>
+                              </div>
+                            );
                           })()}
                         </div>
                         <div style={{ textAlign:"right" }}>
@@ -4117,9 +4137,29 @@ export default function WorldCupPool() {
                             {isLastPaid && <span style={{ fontSize:9, background:"rgba(100,100,200,0.2)", color:"#aab0ff", borderRadius:4, padding:"1px 5px" }}>↩ refund</span>}
                             {prizes2[p.id] && prizes2[p.id] !== refund2 && <span style={{ fontSize:9, background:"rgba(200,168,75,0.3)", color:"#f0d060", borderRadius:4, padding:"1px 5px" }}>💰${prizes2[p.id]}</span>}
                           </div>
-                          <div style={{ fontSize:10, color:"#9ab8a0" }}>
-                            {isPhase2Open() ? `${p2BracketDone}/${Object.values(KNOCKOUT_ROUNDS).flat().length} bracket · ${p2PropsDone}/${P2_PROPS.length} props` : "Phase 2 opens Jun 28"}
-                          </div>
+                          {(() => {
+                            const totalBracket = Object.values(KNOCKOUT_ROUNDS).flat().length;
+                            const p2Locked = isP2PropRoundLocked("r32"); // bracket locked at same time as R32 props
+                            const brktFlag = p2BracketDone >= totalBracket ? "✅" : !isPhase2Open() ? "" : p2Locked ? "🔒" : "⚠️";
+                            const brktColor = p2BracketDone >= totalBracket ? "#9ab8a0" : p2Locked ? "#9ab8a0" : "#f0a020";
+                            const totalP2Props = P2_PROPS.length;
+                            // Only count unlocked P2 prop rounds
+                            const unlockedP2Props = P2_PROPS.filter(pr => !isP2PropRoundLocked(pr.round)).length;
+                            const unlockedP2Done = pred ? P2_PROPS.filter(pr => !isP2PropRoundLocked(pr.round) && pred.p2PropPicks?.[pr.id] !== null && pred.p2PropPicks?.[pr.id] !== undefined).length : 0;
+                            const allP2PropsOk = unlockedP2Props === 0 || unlockedP2Done >= unlockedP2Props;
+                            const gbDone = !!pred?.goldenBootPick;
+                            const gbLocked = isP2PropRoundLocked("r32");
+                            if (!isPhase2Open()) return <div style={{ fontSize:10, color:"#9ab8a0" }}>Phase 2 opens Jun 28</div>;
+                            return (
+                              <div style={{ display:"flex", gap:8, fontSize:10, marginTop:2, flexWrap:"wrap" }}>
+                                <span style={{ color: brktColor }}>{brktFlag} {p2BracketDone}/{totalBracket} bracket</span>
+                                <span style={{ color:"#555" }}>·</span>
+                                <span style={{ color: allP2PropsOk ? "#9ab8a0" : "#f0a020" }}>{allP2PropsOk ? "✅" : "⚠️"} {unlockedP2Done}/{unlockedP2Props || totalP2Props} props</span>
+                                <span style={{ color:"#555" }}>·</span>
+                                <span style={{ color: gbDone ? "#9ab8a0" : gbLocked ? "#9ab8a0" : "#f0a020" }}>{gbDone ? "✅" : gbLocked ? "🔒" : "⚠️"} GB</span>
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div style={{ textAlign:"right" }}>
                           <div style={{ fontSize:26, fontWeight:"bold", color:"#c8a84b" }}>{p.pts2}</div>
