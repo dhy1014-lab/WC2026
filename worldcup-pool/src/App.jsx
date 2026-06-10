@@ -4049,21 +4049,20 @@ export default function WorldCupPool() {
                             const grpsLocked = isGroupRankingsLocked();
                             const grpFlag = grpDone >= 12 ? "✅" : grpsLocked ? "🔒" : "⚠️";
                             const grpColor = grpDone >= 12 ? "#9ab8a0" : grpsLocked ? "#9ab8a0" : "#f0a020";
-                            // For props: count only unlocked props they've answered
                             const unlockedTotal = DAILY_PROPS.filter((_,i) => !isPropLocked(i)).length;
                             const unlockedDone = pred ? (pred.propPicks||[]).filter((x,i) => x !== null && !isPropLocked(i)).length : 0;
                             const allUnlockedDone = unlockedTotal === 0 || unlockedDone >= unlockedTotal;
-                            const prpFlag = allUnlockedDone ? "✅" : "⚠️";
                             const prpColor = allUnlockedDone ? "#9ab8a0" : "#f0a020";
-                            const tbFlag = tbP1ok ? "✅" : isGroupRankingsLocked() ? "🔒" : "⚠️";
                             const tbP1ok = pred?.tbP1 !== undefined && pred?.tbP1 !== null && pred?.tbP1 !== "";
+                            const tbColor = tbP1ok ? "#9ab8a0" : grpsLocked ? "#9ab8a0" : "#f0a020";
+                            const tbFlag = tbP1ok ? "✅" : grpsLocked ? "🔒" : "⚠️";
                             return (
                               <div style={{ display:"flex", gap:8, fontSize:10, marginTop:2, flexWrap:"wrap" }}>
                                 <span style={{ color:grpColor }}>{grpFlag} {grpDone}/12 groups</span>
                                 <span style={{ color:"#555" }}>·</span>
-                                <span style={{ color:prpColor }}>{prpFlag} {unlockedDone}/{unlockedTotal || 34} props</span>
+                                <span style={{ color:prpColor }}>{allUnlockedDone ? "✅" : "⚠️"} {unlockedDone}/{unlockedTotal || 34} props</span>
                                 <span style={{ color:"#555" }}>·</span>
-                                <span style={{ color: tbP1ok ? "#9ab8a0" : isGroupRankingsLocked() ? "#9ab8a0" : "#f0a020" }}>{tbP1ok ? "✅" : isGroupRankingsLocked() ? "🔒" : "⚠️"} TB</span>
+                                <span style={{ color:tbColor }}>{tbFlag} TB</span>
                               </div>
                             );
                           })()}
