@@ -2588,29 +2588,32 @@ export default function WorldCupPool() {
           {fetchStatus==="idle" && "Initialising…"}
           {fetchStatus==="done" && (() => {
             const groupsDone = Object.values(liveResults?.groupRankings||{}).filter(Boolean).length;
-            const propsDone  = (liveResults?.propResults||[]).filter(v => v !== null).length;
-            const lockedProps = DAILY_PROPS.filter((_,i) => isPropLocked(i)).length;
+            const lockedPropCount = DAILY_PROPS.filter((_,i) => isPropLocked(i)).length;
+            const settledPropCount = (liveResults?.propResults||[]).filter((v,i) => isPropLocked(i) && v !== null).length;
             const groupsOk = isGroupStageComplete() ? groupsDone === 12 : groupsDone > 0;
-            const propsOk  = lockedProps === 0 || propsDone >= lockedProps;
-
-            const p2BracketTotal = Object.values(KNOCKOUT_ROUNDS).flat().filter(m => {
-              const round = Object.entries(KNOCKOUT_ROUNDS).find(([,ms]) => ms.some(x => x.id===m.id))?.[0];
-              return round && isP2PropRoundLocked(round);
-            }).length;
-            const p2BracketDone = Object.entries(livePhase2||{}).filter(([k,v]) => k!=="finalFirstGoalMinute" && v !== null).length;
-            const p2PropsTotal  = P2_PROPS.filter(p => isP2PropRoundLocked(p.round)).length;
-            const p2PropsDoneCount = Object.values(liveP2Props||{}).filter(v => v !== null).length;
-            const p2BracketOk = p2BracketTotal === 0 || p2BracketDone >= p2BracketTotal;
-            const p2PropsOk   = p2PropsTotal === 0   || p2PropsDoneCount >= p2PropsTotal;
+            const propsOk  = lockedPropCount === 0 || settledPropCount >= lockedPropCount;
 
             const parts = [
               `${groupsOk ? "✅" : "⚠️"} Groups ${groupsDone}/12`,
-              `${propsOk  ? "✅" : "⚠️"} Props ${propsDone}/${lockedProps || 0}`,
+              `${propsOk  ? "✅" : "⚠️"} Props ${settledPropCount}/${lockedPropCount}`,
             ];
+
             if (isPhase2Open()) {
-              parts.push(`${p2BracketOk ? "✅" : "⚠️"} Bracket ${p2BracketDone}/${p2BracketTotal}`);
-              parts.push(`${p2PropsOk   ? "✅" : "⚠️"} P2 Props ${p2PropsDoneCount}/${p2PropsTotal}`);
+              // Bracket: count locked matches and how many have a winner
+              let bracketTotal = 0, bracketDoneCount = 0;
+              Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
+                if (isP2PropRoundLocked(round)) {
+                  bracketTotal += matches.length;
+                  matches.forEach(m => { if (livePhase2?.[m.id]) bracketDoneCount++; });
+                }
+              });
+              // P2 props: count locked rounds
+              const p2PropTotal = P2_PROPS.filter(p => isP2PropRoundLocked(p.round)).length;
+              const p2PropSettled = P2_PROPS.filter(p => isP2PropRoundLocked(p.round) && liveP2Props?.[p.id] !== null && liveP2Props?.[p.id] !== undefined).length;
+              parts.push(`${bracketDoneCount >= bracketTotal && bracketTotal > 0 ? "✅" : bracketTotal === 0 ? "✅" : "⚠️"} Bracket ${bracketDoneCount}/${bracketTotal}`);
+              parts.push(`${p2PropSettled >= p2PropTotal && p2PropTotal > 0 ? "✅" : p2PropTotal === 0 ? "✅" : "⚠️"} P2 Props ${p2PropSettled}/${p2PropTotal}`);
             }
+
             return parts.join("  ·  ");
           })()}
         </span>
