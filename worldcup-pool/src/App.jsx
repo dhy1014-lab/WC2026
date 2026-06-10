@@ -118,6 +118,21 @@ const TEAMS_BY_GROUP = {
   L: ["England", "Croatia", "Ghana", "Panama"],
 };
 
+// Normalize variant team names the API might return to our canonical names
+const TEAM_NAME_ALIASES = {
+  "Czech Republic": "Czechia",
+  "Curaçao": "Curacao",
+  "United States": "USA",
+  "United States of America": "USA",
+  "Côte d'Ivoire": "Ivory Coast",
+  "Cote d'Ivoire": "Ivory Coast",
+  "Democratic Republic of Congo": "DR Congo",
+  "Democratic Republic of the Congo": "DR Congo",
+};
+function normalizeTeamName(name) {
+  return TEAM_NAME_ALIASES[name] || name;
+}
+
 // Strip any saved group rankings that contain teams not in our current groups
 function sanitizeGroupRankings(groupRankings) {
   if (!groupRankings) return {};
@@ -125,8 +140,9 @@ function sanitizeGroupRankings(groupRankings) {
   Object.entries(groupRankings).forEach(([g, ranking]) => {
     const validTeams = TEAMS_BY_GROUP[g];
     if (!validTeams || !Array.isArray(ranking)) return;
-    if (ranking.every(t => validTeams.includes(t))) {
-      clean[g] = ranking;
+    const normalized = ranking.map(normalizeTeamName);
+    if (normalized.every(t => validTeams.includes(t))) {
+      clean[g] = normalized;
     }
     // else discard — stale data with wrong teams
   });
@@ -191,7 +207,7 @@ const DAILY_PROPS = [
   { date:"Jun 15", label:"Day 5 – Prop B", q:"Will Saudi Arabia beat Uruguay?",                                             ptsYes:9, ptsNo:1, yes:"Saudi Arabia shock result!",              no:"Uruguay win or draw" },
   // Jun 16
   { date:"Jun 16", label:"Day 6 – Prop A", q:"Will Argentina keep a clean sheet vs Algeria?",                               ptsYes:5, ptsNo:5, yes:"Argentina lock it down",                  no:"Algeria get on the board" },
-  { date:"Jun 16", label:"Day 6 – Prop B", q:"Will a penalty be awarded in Argentina/Algeria or Austria/Jordan?",           ptsYes:6, ptsNo:4, yes:"Spot kick awarded in at least one game", no:"No penalties in either match" },
+  { date:"Jun 16", label:"Day 6 – Prop B", q:"Will a penalty kick be given (regardless of outcome) in the Argentina vs Algeria match or the Austria vs Jordan match?", ptsYes:6, ptsNo:4, yes:"Spot kick awarded in at least one game", no:"No penalties in either match" },
   // Jun 17
   { date:"Jun 17", label:"Day 7 – Prop A", q:"Will Cristiano Ronaldo score vs DR Congo?",                                   ptsYes:4, ptsNo:6, yes:"CR7 on the scoresheet",                   no:"Ronaldo blanks" },
   { date:"Jun 17", label:"Day 7 – Prop B", q:"Will England vs Croatia produce fewer than 2 total goals?",                  ptsYes:7, ptsNo:3, yes:"Tight affair — 0 or 1 total goals",        no:"2 or more goals in the match" },
@@ -202,7 +218,7 @@ const DAILY_PROPS = [
   { date:"Jun 19", label:"Day 9 – Prop A", q:"Will the USA beat Australia?",                                                ptsYes:5, ptsNo:5, yes:"USA take all 3 points",                   no:"Australia win or draw" },
   { date:"Jun 19", label:"Day 9 – Prop B", q:"Will Scotland vs Morocco produce 2+ total goals?",                           ptsYes:5, ptsNo:5, yes:"Goals flow in Foxborough",                no:"Tight, low-scoring affair" },
   // Jun 20
-  { date:"Jun 20", label:"Day 10 – Prop A", q:"Will a goal be scored after the 80th minute in any Day 10 match?",          ptsYes:3, ptsNo:7, yes:"Late drama somewhere!",                   no:"All goals before the 80th minute" },
+  { date:"Jun 20", label:"Day 10 – Prop A", q:"Will a goal be scored in the 81st minute or later (including injury time) in any Jun 20 match?",          ptsYes:3, ptsNo:7, yes:"Late drama somewhere!",                   no:"All goals before the 81st minute" },
   { date:"Jun 20", label:"Day 10 – Prop B", q:"Will Ecuador beat Curaçao?",                                                ptsYes:3, ptsNo:7, yes:"Ecuador take the win",                    no:"Curaçao hold on for a result" },
   // Jun 21
   { date:"Jun 21", label:"Day 11 – Prop A", q:"Will Spain score 2+ goals vs Saudi Arabia?",                                ptsYes:3, ptsNo:7, yes:"Spain put two or more past Saudi Arabia", no:"Saudi Arabia hold Spain to under 2" },
@@ -221,7 +237,7 @@ const DAILY_PROPS = [
   { date:"Jun 25", label:"Day 15 – Prop B", q:"Will Germany vs Ecuador produce 4+ total goals?",                                   ptsYes:6, ptsNo:4, yes:"High-scoring clash",              no:"Under 4 total goals" },
   // Jun 26
   { date:"Jun 26", label:"Day 16 – Prop A", q:"Will Erling Haaland score vs France?",                                     ptsYes:7, ptsNo:3, yes:"Haaland on the scoresheet",              no:"Haaland blanks" },
-  { date:"Jun 26", label:"Day 16 – Prop B", q:"Will there be a last-minute goal (85'+) on Day 16?",                       ptsYes:3, ptsNo:7, yes:"Late drama on Day 16!",                  no:"No goals after the 85th minute" },
+  { date:"Jun 26", label:"Day 16 – Prop B", q:"Will a goal be scored in the 85th minute or later (including injury time) in any Jun 26 match?",       ptsYes:3, ptsNo:7, yes:"Late drama on Day 16!",                  no:"No goals in the 85th minute or later" },
   // Jun 27
   { date:"Jun 27", label:"Final Day – Prop A", q:"Will Jude Bellingham register a goal or assist for England vs Panama?", ptsYes:4, ptsNo:6, yes:"Bellingham delivers on the final day",  no:"Bellingham blanks" },
   { date:"Jun 27", label:"Final Day – Prop B", q:"Will Lionel Messi score in Argentina's final group match vs Jordan?",   ptsYes:4, ptsNo:6, yes:"Messi on the scoresheet",               no:"Messi blanks" },
@@ -389,7 +405,7 @@ const P2_PROP_LOCKS = {
 };
 function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round] || new Date("2099-01-01")); }
 
-function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot) {
+function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot, p2PropPicks, goldenBootPick) {
   let pts = 0;
   // Bracket points (includes third place)
   if (phase2Picks && livePhase2) {
@@ -402,22 +418,26 @@ function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot) {
       });
     });
   }
-  // P2 prop points
-  if (phase2Picks && liveP2Props) {
+  // P2 prop points — picks stored in p2PropPicks, not phase2Picks
+  if (p2PropPicks && liveP2Props) {
     P2_PROPS.forEach(prop => {
-      const pick = phase2Picks[prop.id];
+      const pick = p2PropPicks[prop.id];
       const actual = liveP2Props?.[prop.id];
       if (pick === null || pick === undefined || actual === null || actual === undefined) return;
       if (pick === actual) pts += actual ? prop.ptsYes : prop.ptsNo;
     });
   }
-  // Golden Boot points
-  if (phase2Picks?.goldenBoot && goldenBoot?.answer && goldenBoot?.options) {
-    const pick = phase2Picks.goldenBoot;
+  // Golden Boot points — pick stored in goldenBootPick, not phase2Picks
+  if (goldenBootPick && goldenBoot?.answer && goldenBoot?.options) {
     const answer = goldenBoot.answer;
-    if (pick === answer) {
-      const opt = goldenBoot.options.find(o => o.name === pick);
+    if (goldenBootPick === answer) {
+      const opt = goldenBootPick === "Other"
+        ? { pts: 20 }
+        : goldenBoot.options.find(o => o.name === goldenBootPick);
       if (opt) pts += opt.pts;
+    } else if (goldenBootPick === "Other" && !goldenBoot.options.some(o => o.name === answer)) {
+      // "Other" wins if the actual winner isn't one of the named options
+      pts += 20;
     }
   }
   return pts;
@@ -557,77 +577,36 @@ Return ONLY valid JSON, no markdown, no explanation:
     "G": null, "H": null, "I": null, "J": null, "K": null, "L": null
   },
   "propResults": [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],
+  "totalGoals": null,
   "matchday": "e.g. Group Stage Day 3",
   "lastUpdated": "ISO timestamp"
 }
 
+- totalGoals: total goals scored across all 72 group stage matches once all 12 groups are fully complete, otherwise null.
+
 propResults is an array of 34 values (index 0–33), 2 props per day:
 ${propList}
 
+Settlement guidance — how to research and settle each prop type:
+
+FINAL SCORES (win/loss/draw, goals scored, margin of victory): Look up the final score. Straightforward.
+
+CLEAN SHEETS: A team kept a clean sheet if they conceded 0 goals in the match. Check final score.
+
+FIRST-HALF GOALS (prop 2): Search for the half-time score or goal minutes. A goal is first-half if scored in minutes 1–45+stoppage. Return null if you cannot confirm goal timing.
+
+RED CARDS / YELLOW CARDS (props 5, 25): Search match events or match stats pages (ESPN, BBC Sport, Sofascore) for card incidents. Check ALL matches on that date for multi-match props. Return null if card data is unavailable, not false.
+
+PENALTIES GIVEN (prop 11): A penalty is "given" the moment the referee awards it, regardless of whether it is scored or missed. Search match events for "penalty" incidents in both specified matches. Return null if match event data is unavailable.
+
+GOAL TIMING — 81st minute or later (prop 18), 85th minute or later (prop 31): Search detailed match stats or match timeline for goal minutes. Injury-time goals (e.g. 90+2, 90+5) count. Check ALL matches on that date. Return null if you cannot confirm goal minutes — do NOT assume false just because you cannot find timing data.
+
+GOAL OR ASSIST by a named player (props 26, 27, 28, 32): Search match reports AND detailed match stats. Goals are listed in all reports. Assists may only appear in detailed stats pages (ESPN match recap, BBC Sport, Sofascore, WhoScored). Check both. Return null if you can confirm the player was on the pitch but cannot find assist data — do NOT return false just because assists aren't in the headline summary.
+
+GENERAL RULE: If a match has been played and you have confirmed results, settle the prop. If you cannot find specific data needed to settle a prop (e.g. goal minutes, assist data), return null rather than guessing false.
+
 Team names must exactly match:
 ${Object.entries(TEAMS_BY_GROUP).map(([g,t])=>`Group ${g}: ${t.join(", ")}`).join("\n")}
-
-Return ONLY the JSON.`;
-
-  const res = await fetch("/api/scores", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1500,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  const cleaned = raw.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  // If no JSON yet (tournament hasn't started), return empty results
-  if (s === -1) return {
-    groupRankings: { A:null,B:null,C:null,D:null,E:null,F:null,G:null,H:null,I:null,J:null,K:null,L:null },
-    propResults: Array(34).fill(null),
-    matchday: "Tournament starts June 11",
-    lastUpdated: new Date().toISOString(),
-  };
-  return JSON.parse(cleaned.slice(s, e + 1));
-}
-
-// ── FETCH LIVE PHASE 2 RESULTS ───────────────────────────────────────────────
-// Fetches bracket winners + P2 prop results + P2 golden boot winner in one call
-async function fetchLivePhase2() {
-  const matchList = Object.entries(KNOCKOUT_ROUNDS).flatMap(([round, matches]) =>
-    matches.map(m => `${m.id} (${ROUND_LABELS[round]}: ${m.label}): winner team name or null`)
-  ).join("\n");
-  const matchIds = Object.values(KNOCKOUT_ROUNDS).flat().map(m => `"${m.id}": null`).join(", ");
-
-  const propList = P2_PROPS.map(p => `"${p.id}": null  // ${p.q} — true=YES happened, false=NO, null=unresolved`).join("\n");
-
-  const prompt = `Search the web for 2026 FIFA World Cup knockout stage results (starting June 28 2026).
-
-Return ONLY valid JSON, no markdown:
-{
-  "knockoutWinners": { ${matchIds} },
-  "p2PropResults": {
-${propList}
-  },
-  "goldenBootWinner": null,
-  "lastUpdated": "ISO timestamp"
-}
-
-Rules:
-- knockoutWinners: set each match id to the winning team name (exact spelling from the tournament) or null if not yet played.
-- p2PropResults: set each prop id to true (YES happened), false (NO happened), or null (round not complete yet).
-  Only settle a prop if the relevant round is fully complete.
-  R32 props (p2_r32_*): settle after all 16 R32 matches played.
-  R16 props (p2_r16_*): settle after all 8 R16 matches played.
-  QF props (p2_qf_*): settle after all 4 QF matches played.
-  SF props (p2_sf_*): settle after both SF matches played.
-  Final props (p2_final_*): settle after the Final is played.
-- goldenBootWinner: the name of the tournament top scorer once the Final is played, or null.
-
-Match list:
-${matchList}
 
 Return ONLY the JSON.`;
 
@@ -645,12 +624,112 @@ Return ONLY the JSON.`;
   const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   const cleaned = raw.replace(/```json|```/g, "").trim();
   const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
+  // If no JSON yet (tournament hasn't started), return empty results
+  if (s === -1) return {
+    groupRankings: { A:null,B:null,C:null,D:null,E:null,F:null,G:null,H:null,I:null,J:null,K:null,L:null },
+    propResults: Array(34).fill(null),
+    totalGoals: null,
+    matchday: "Tournament starts June 11",
+    lastUpdated: new Date().toISOString(),
+  };
+  return JSON.parse(cleaned.slice(s, e + 1));
+}
+
+// ── FETCH LIVE PHASE 2 RESULTS ───────────────────────────────────────────────
+// Fetches bracket winners + P2 prop results + P2 golden boot winner in one call
+async function fetchLivePhase2(bracketSlots) {
+  // Build match list with real team names when slots are resolved, otherwise slot codes
+  const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
+  const matchList = Object.entries(KNOCKOUT_ROUNDS).flatMap(([round, matches]) =>
+    matches.map(m => {
+      const teamA = resolveSlot(m.slotA);
+      const teamB = resolveSlot(m.slotB);
+      return `${m.id} (${ROUND_LABELS[round]}: ${teamA} vs ${teamB}): winner team name or null`;
+    })
+  ).join("\n");
+  const matchIds = Object.values(KNOCKOUT_ROUNDS).flat().map(m => `"${m.id}": null`).join(", ");
+
+  const propList = P2_PROPS.map(p => `"${p.id}": null  // ${p.q} — true=YES happened, false=NO, null=unresolved`).join("\n");
+
+  const prompt = `Search the web for 2026 FIFA World Cup knockout stage results (starting June 28 2026).
+
+Return ONLY valid JSON, no markdown:
+{
+  "knockoutWinners": { ${matchIds} },
+  "p2PropResults": {
+${propList}
+  },
+  "goldenBootWinner": null,
+  "finalFirstGoalMinute": null,
+  "lastUpdated": "ISO timestamp"
+}
+
+Rules:
+- knockoutWinners: set each match id to the winning team name (exact spelling from the tournament) or null if not yet played.
+- p2PropResults: set each prop id to true (YES happened), false (NO happened), or null (round not complete yet or data unavailable).
+  Only settle a prop once the relevant round is fully complete.
+  R32 props (p2_r32_*): settle after all 16 R32 matches played.
+  R16 props (p2_r16_*): settle after all 8 R16 matches played.
+  QF props (p2_qf_*): settle after all 4 QF matches played.
+  SF props (p2_sf_*): settle after both SF matches played.
+  Final props (p2_final_*): settle after the Final is played.
+- goldenBootWinner: the name of the tournament top scorer once the Final is played, or null.
+- finalFirstGoalMinute: the minute of the first goal in the Final (integer, e.g. 23 — use 90+ values for extra time, e.g. 113), or null if the Final has not been played.
+
+Settlement guidance — how to research and settle each prop type:
+
+REGULATION vs EXTRA TIME: Several props specify "in regulation". A match goes to ET if the score is level after 90 minutes. The regulation score is the score at 90 minutes, not after ET or penalties. If a match ends in ET or penalties, the regulation score was a draw. Always check whether a match went to ET before using the final score for regulation-only props.
+
+SINGLE-GOAL MARGIN IN REGULATION (p2_r32_a): A match is "decided by a single goal in regulation" if: (1) it did NOT go to ET or penalties, AND (2) the regulation final score differs by exactly 1 goal. If a match went to ET, it was NOT decided in regulation regardless of the ET result. Check all 16 R32 matches.
+
+TOP-10 FIFA-RANKED TEAM ELIMINATED (p2_r32_b): Use the FIFA rankings from November 2025 (the seeding snapshot used for the tournament draw). The top 10 teams by those rankings are widely published. A team is "eliminated" if they lost in the R32 and are out of the tournament. Cross-reference R32 results with the November 2025 FIFA top 10. Return null if you cannot confirm the rankings.
+
+HAT-TRICKS (p2_r32_c): A hat-trick is 3 or more goals by one player in a single match. These are prominently reported. Check all R32 matches.
+
+MATCH-DECIDING GOAL IN 90+ STOPPAGE TIME (p2_r16_a): This requires ALL of: (1) the goal was scored in stoppage time of regulation (minute 90+1 or later, NOT in ET), AND (2) the match did NOT go to ET or penalties (it was decided in regulation), AND (3) the goal changed the scoreline to make one team the winner (not a consolation or dead-rubber goal — e.g. making it 2-1 when it was 1-1, but not 3-0 when it was already 2-0). Search detailed match timelines. Return null if you cannot confirm all three conditions.
+
+CONFEDERATION CHECK (p2_r16_c): Non-European, non-South-American confederations are: CONCACAF (USA, Canada, Mexico, Curaçao, Haiti, Panama), CAF (African teams), AFC (Asian teams), OFC (New Zealand). A team wins "in regulation" if the match did not go to ET or penalties.
+
+RED CARDS (p2_qf_b, p2_final_b): Search match events pages for red card incidents. These are prominently reported for high-profile matches. Return null only if match event data is completely unavailable.
+
+QF WIN BY 2+ GOALS IN REGULATION (p2_qf_c): Check regulation score only. If a match went to ET, the regulation score was a draw (0 goal margin in regulation) — count as false for this prop. Return null if unsure whether ET was played.
+
+3+ GOALS IN REGULATION IN A SF (p2_sf_a): Use regulation score only. If the match went to ET, only count goals scored in minutes 1–90 (including stoppage time of 90 mins).
+
+COMEBACK WIN (p2_sf_b): A "comeback" means a team fell behind (conceded the first goal and were trailing) and then went on to win the match in regulation or ET. This requires knowing the scoring sequence. Search match reports and timelines for "comeback", "came from behind", or the order goals were scored. Return null if scoring sequence is not available — do NOT guess based on final score alone. A team winning 3-1 may not have come from behind.
+
+OWN GOALS (p2_sf_c): Own goals are listed in goalscorer data — typically shown as "OG" or "own goal" next to the scoring team. Check match reports for both SFs.
+
+FINAL FIRST GOAL MINUTE (finalFirstGoalMinute): Search for "first goal" minute in the Final. Return the integer minute (e.g. 34 for a 34th-minute goal, 113 for a 113th-minute goal in ET). Return null if the Final has not been played.
+
+GENERAL RULE: Return null rather than guessing when specific data (goal minutes, scoring sequence, shot location, assist attribution) is not clearly available from web sources.
+
+Match list:
+${matchList}
+
+Return ONLY the JSON.`;
+
+  const res = await fetch("/api/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 3000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
   if (s === -1) return null;
   const parsed = JSON.parse(cleaned.slice(s, e + 1));
   return {
     knockoutWinners: parsed.knockoutWinners || null,
     p2PropResults: parsed.p2PropResults || null,
     goldenBootWinner: parsed.goldenBootWinner || null,
+    finalFirstGoalMinute: parsed.finalFirstGoalMinute ?? null,
   };
 }
 
@@ -1129,8 +1208,8 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
     if (pa === pb) p2Agree++;
     else { p2Disagree++; if (actual != null) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
   });
-  const pts2A = calcPhase2Points(predA.phase2Picks, livePhase2, liveP2Props, goldenBoot);
-  const pts2B = calcPhase2Points(predB.phase2Picks, livePhase2, liveP2Props, goldenBoot);
+  const pts2A = calcPhase2Points(predA.phase2Picks, livePhase2, liveP2Props, goldenBoot, predA.p2PropPicks, predA.goldenBootPick);
+  const pts2B = calcPhase2Points(predB.phase2Picks, livePhase2, liveP2Props, goldenBoot, predB.p2PropPicks, predB.goldenBootPick);
 
   const isP1 = phase === "p1";
   const displayPtsA = isP1 ? ptsA : pts2A;
@@ -1814,8 +1893,13 @@ export default function WorldCupPool() {
         });
       }
       setPrevPropResults(r.propResults || []);
+      // Normalize any variant team names the API may have returned (e.g. "Czech Republic" → "Czechia")
+      const normalizedGroupRankings = {};
+      Object.entries(r.groupRankings || {}).forEach(([g, ranking]) => {
+        normalizedGroupRankings[g] = Array.isArray(ranking) ? ranking.map(normalizeTeamName) : ranking;
+      });
       // Merge API result with any admin-overridden cells before persisting
-      const mergedGroupRankings = { ...(r.groupRankings || {}) };
+      const mergedGroupRankings = { ...normalizedGroupRankings };
       Object.keys(mergedGroupRankings).forEach(g => {
         if (adminOverrides["groupRankings_"+g]) mergedGroupRankings[g] = liveResults?.groupRankings?.[g] || mergedGroupRankings[g];
       });
@@ -1834,8 +1918,11 @@ export default function WorldCupPool() {
           try {
             const slots = await fetchBracketSlots();
             if (slots && Object.values(slots).some(v => v !== null)) {
-              setBracketSlots(slots);
-              await dbPatch("bracketSlots", slots);
+              // Normalize any variant team names in slots
+              const normalizedSlots = {};
+              Object.entries(slots).forEach(([k, v]) => { normalizedSlots[k] = v ? normalizeTeamName(v) : v; });
+              setBracketSlots(normalizedSlots);
+              await dbPatch("bracketSlots", normalizedSlots);
             }
           } catch {}
         }
@@ -1853,13 +1940,19 @@ export default function WorldCupPool() {
 
         // 3. Knockout results + P2 props + golden boot winner
         try {
-          const p2 = await fetchLivePhase2();
+          const p2 = await fetchLivePhase2(bracketSlots);
           if (p2) {
             if (p2.knockoutWinners) {
-              const mergedPhase2 = { ...p2.knockoutWinners };
+              // Normalize any variant team names the API may return
+              const normalizedWinners = {};
+              Object.entries(p2.knockoutWinners).forEach(([k, v]) => { normalizedWinners[k] = v ? normalizeTeamName(v) : v; });
+              const mergedPhase2 = { ...normalizedWinners };
               Object.keys(mergedPhase2).forEach(matchId => {
                 if (adminOverrides["livePhase2_"+matchId] && livePhase2?.[matchId] !== undefined) mergedPhase2[matchId] = livePhase2[matchId];
               });
+              // Carry forward finalFirstGoalMinute once known — never overwrite with null
+              if (p2.finalFirstGoalMinute != null) mergedPhase2.finalFirstGoalMinute = p2.finalFirstGoalMinute;
+              else if (livePhase2?.finalFirstGoalMinute != null) mergedPhase2.finalFirstGoalMinute = livePhase2.finalFirstGoalMinute;
               setLivePhase2(mergedPhase2);
               try { await dbPatch("livePhase2", mergedPhase2); } catch {}
             }
@@ -2018,14 +2111,33 @@ export default function WorldCupPool() {
   const p1Complete = groupsDone >= 12 && (unlockedProps === 0 || unlockedPropsDone >= unlockedProps) && tbP1 !== "";
   const hasIncomplete = currentPlayer && !isAdmin && (!p1Complete || (isPhase2Open() && !p2Complete));
 
+  // Count results that are past their lock time but still null — used to badge the audit tab
+  const needsOverrideCount = isAdmin ? (() => {
+    let count = 0;
+    if (isGroupStageComplete()) Object.keys(TEAMS_BY_GROUP).forEach(g => { if (!liveResults?.groupRankings?.[g]) count++; });
+    DAILY_PROPS.forEach((_, i) => { if (isPropLocked(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) count++; });
+    Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => { if (isP2PropRoundLocked(round)) matches.forEach(m => { if (!livePhase2?.[m.id]) count++; }); });
+    P2_PROPS.forEach(prop => { if (isP2PropRoundLocked(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) count++; });
+    return count;
+  })() : 0;
+
   const leaderboard = players
     .map(p => ({
       ...p,
       pts: calcPoints(predictions[p.id], liveResults),
-      pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, livePhase2, liveP2Props, goldenBoot),
+      pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, livePhase2, liveP2Props, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick),
       hasPred: !!predictions[p.id]
     }))
-    .sort((a, b) => b.pts - a.pts);
+    .sort((a, b) => {
+      if (b.pts !== a.pts) return b.pts - a.pts;
+      // Tiebreaker: closest to total group stage goals — only once group stage is final and answer is known
+      const totalGoals = liveResults?.totalGoals;
+      if (isGroupStageComplete() && totalGoals != null) {
+        const tbA = predictions[a.id]?.tbP1, tbB = predictions[b.id]?.tbP1;
+        if (tbA != null && tbB != null) return Math.abs(tbA - totalGoals) - Math.abs(tbB - totalGoals);
+      }
+      return 0;
+    });
 
   // selPropIdx retained for potential future use
 
@@ -3113,7 +3225,7 @@ export default function WorldCupPool() {
 
             {/* Tab bar */}
             <div style={{ display:"flex", gap:4, marginBottom:16 }}>
-              {[["settings","⚙️ Settings"],["audit","📋 Results Audit"],["players","👥 Players"]].map(([key,label]) => (
+              {[["settings","⚙️ Settings"],["audit", needsOverrideCount > 0 ? `📋 Audit 🔴${needsOverrideCount}` : "📋 Results Audit"],["players","👥 Players"]].map(([key,label]) => (
                 <button key={key} onClick={() => setAdminTab(key)} style={{
                   flex:1, padding:"8px 4px", borderRadius:6, border:"1px solid",
                   borderColor: adminTab===key ? "#f0d060" : "rgba(255,255,255,0.12)",
@@ -3254,6 +3366,37 @@ export default function WorldCupPool() {
                 if (overrideKey) await setOverride(overrideKey);
               };
 
+              // Compute items that should be settled by now but are still null (API failed to resolve)
+              const needsOverride = [];
+              // P1 groups: group stage complete but ranking still null
+              if (isGroupStageComplete()) {
+                Object.keys(TEAMS_BY_GROUP).forEach(g => {
+                  if (!liveResults?.groupRankings?.[g]) needsOverride.push({ phase:"p1", type:"group", label:`Group ${g} ranking`, key:"groupRankings_"+g });
+                });
+              }
+              // P1 props: lock time passed but result still null
+              DAILY_PROPS.forEach((prop, i) => {
+                if (isPropLocked(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) {
+                  needsOverride.push({ phase:"p1", type:"prop", label:`${prop.date} — ${prop.q.substring(0,50)}…`, key:"propResults_"+i });
+                }
+              });
+              // P2 bracket: round lock passed but match winner still null
+              Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
+                if (isP2PropRoundLocked(round)) {
+                  matches.forEach(m => {
+                    if (!livePhase2?.[m.id]) needsOverride.push({ phase:"p2", type:"bracket", label:`${ROUND_LABELS[round]}: ${m.label}`, key:"livePhase2_"+m.id });
+                  });
+                }
+              });
+              // P2 props: round lock passed but result still null
+              P2_PROPS.forEach(prop => {
+                if (isP2PropRoundLocked(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) {
+                  needsOverride.push({ phase:"p2", type:"prop", label:`${prop.round.toUpperCase()} — ${prop.q.substring(0,50)}…`, key:"liveP2Props_"+prop.id });
+                }
+              });
+              const p1Needs = needsOverride.filter(x => x.phase==="p1");
+              const p2Needs = needsOverride.filter(x => x.phase==="p2");
+
               // P1 score breakdown per player
               const p1Breakdown = players.map(p => {
                 const pred = predictions[p.id] || {};
@@ -3311,6 +3454,32 @@ export default function WorldCupPool() {
 
               return (
                 <div>
+                  {/* Needs-override alert banner */}
+                  {needsOverride.length > 0 && (
+                    <div style={{ background:"rgba(255,80,80,0.1)", border:"1px solid rgba(255,80,80,0.4)", borderRadius:6, padding:"10px 12px", marginBottom:12 }}>
+                      <div style={{ fontSize:11, fontWeight:"bold", color:"#ff8080", marginBottom:6 }}>
+                        ⚠️ {needsOverride.length} result{needsOverride.length>1?"s":""} need manual override — API returned null after lock time
+                      </div>
+                      {p1Needs.length > 0 && (
+                        <div style={{ marginBottom:4 }}>
+                          <div style={{ fontSize:10, color:"#ffb060", fontWeight:"bold", marginBottom:2 }}>Phase 1 ({p1Needs.length})</div>
+                          {p1Needs.map(item => (
+                            <div key={item.key} style={{ fontSize:10, color:"#ffb0b0", paddingLeft:8 }}>• {item.label}</div>
+                          ))}
+                        </div>
+                      )}
+                      {p2Needs.length > 0 && (
+                        <div>
+                          <div style={{ fontSize:10, color:"#ffb060", fontWeight:"bold", marginBottom:2 }}>Phase 2 ({p2Needs.length})</div>
+                          {p2Needs.map(item => (
+                            <div key={item.key} style={{ fontSize:10, color:"#ffb0b0", paddingLeft:8 }}>• {item.label}</div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ fontSize:10, color:"#ff8080", marginTop:6, opacity:0.8 }}>Use the toggles below to set results manually.</div>
+                    </div>
+                  )}
+
                   {/* Override summary banner */}
                   {Object.keys(adminOverrides).length > 0 && (
                     <div style={{ background:"rgba(255,160,50,0.12)", border:"1px solid rgba(255,160,50,0.35)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -3321,8 +3490,12 @@ export default function WorldCupPool() {
 
                   {/* Phase tabs */}
                   <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-                    <button style={auditBtnStyle("p1")} onClick={() => setAuditPhase("p1")}>Phase 1 — Group Stage</button>
-                    <button style={auditBtnStyle("p2")} onClick={() => setAuditPhase("p2")}>Phase 2 — Knockouts</button>
+                    <button style={auditBtnStyle("p1")} onClick={() => setAuditPhase("p1")}>
+                      Phase 1 — Group Stage{p1Needs.length > 0 ? ` 🔴${p1Needs.length}` : ""}
+                    </button>
+                    <button style={auditBtnStyle("p2")} onClick={() => setAuditPhase("p2")}>
+                      Phase 2 — Knockouts{p2Needs.length > 0 ? ` 🔴${p2Needs.length}` : ""}
+                    </button>
                   </div>
 
                   {/* ── P1 AUDIT ── */}
@@ -3864,7 +4037,16 @@ export default function WorldCupPool() {
             {lbPhase==="p2" && lbTab==="standings" && (() => {
               const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
               const entryFee = settings.entryFee || 25;
-              const lb2 = [...leaderboard].sort((a,b) => b.pts2 - a.pts2);
+              const lb2 = [...leaderboard].sort((a, b) => {
+                if (b.pts2 !== a.pts2) return b.pts2 - a.pts2;
+                // Tiebreaker: closest to minute of first goal in the Final — only once Final is played
+                const finalFirstGoal = livePhase2?.finalFirstGoalMinute;
+                if (livePhase2?.final_1 && finalFirstGoal != null) {
+                  const tbA = predictions[a.id]?.tbP2, tbB = predictions[b.id]?.tbP2;
+                  if (tbA != null && tbB != null) return Math.abs(tbA - finalFirstGoal) - Math.abs(tbB - finalFirstGoal);
+                }
+                return 0;
+              });
               const prizes2 = calcPrizes(lb2, paid, pot2, entryFee, settings.payouts2);
               const refund2 = entryFee;
               const dist2 = Math.max(0, pot2 - refund2);
@@ -3955,7 +4137,15 @@ export default function WorldCupPool() {
                       Chart will populate as knockout results and props settle.
                     </div>
                     <div style={{ marginTop:16, borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:12 }}>
-                      {[...leaderboard].sort((a,b) => b.pts2 - a.pts2).map((p, i) => (
+                      {[...leaderboard].sort((a, b) => {
+                        if (b.pts2 !== a.pts2) return b.pts2 - a.pts2;
+                        const finalFirstGoal = livePhase2?.finalFirstGoalMinute;
+                        if (livePhase2?.final_1 && finalFirstGoal != null) {
+                          const tbA = predictions[a.id]?.tbP2, tbB = predictions[b.id]?.tbP2;
+                          if (tbA != null && tbB != null) return Math.abs(tbA - finalFirstGoal) - Math.abs(tbB - finalFirstGoal);
+                        }
+                        return 0;
+                      }).map((p, i) => (
                         <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"5px 0" }}>
                           <div style={{ width:10, height:10, borderRadius:"50%", background: PLAYER_COLORS[players.findIndex(pl=>pl.id===p.id) % PLAYER_COLORS.length], flexShrink:0 }} />
                           <div style={{ flex:1, fontSize:13, color:"#f0e6c8" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`} {displayName(p)}</div>
