@@ -1638,6 +1638,7 @@ export default function WorldCupPool() {
   const [players, setPlayers]             = useState([]);
   const [predictions, setPredictions]     = useState({});
   const [dbLoading, setDbLoading]         = useState(true);
+  const [lbLoading, setLbLoading]         = useState(false);
   const [dbError, setDbError]             = useState("");
   const [currentPlayer, setCurrentPlayer] = useState(() => {
     try { const s = localStorage.getItem("wc2026_session"); return s ? JSON.parse(s) : null; } catch { return null; }
@@ -2451,6 +2452,7 @@ export default function WorldCupPool() {
             <button key={s} style={S.navBtn(screen===s)} onClick={() => {
               setScreen(s);
               if (s === "leaderboard") {
+                setLbLoading(true);
                 dbLoad().then(data => {
                   setPlayers(data.players);
                   setPredictions(data.predictions);
@@ -2460,7 +2462,8 @@ export default function WorldCupPool() {
                   if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
                   if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
                   setFetchStatus("done");
-                }).catch(() => {});
+                  setLbLoading(false);
+                }).catch(() => { setLbLoading(false); });
               }
             }}>
               {s==="home" ? "🏠 Home" : "🏆 Board"}
@@ -3909,8 +3912,9 @@ export default function WorldCupPool() {
         {screen==="leaderboard" && (
           <div>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
-              <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>🏆 Leaderboard</h2>
+              <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>🏆 Leaderboard {lbLoading && <span style={{ fontSize:12, color:"#9ab8a0" }}>⏳</span>}</h2>
               <button onClick={async () => {
+                setLbLoading(true);
                 try {
                   const data = await dbLoad();
                   setPlayers(data.players);
@@ -3922,8 +3926,9 @@ export default function WorldCupPool() {
                   if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
                   setFetchStatus("done");
                 } catch {}
+                setLbLoading(false);
               }} style={{ ...S.btn, fontSize:11, padding:"6px 12px" }}>
-                🔄 Reload
+                {lbLoading ? "⏳" : "🔄 Reload"}
               </button>
             </div>
 
