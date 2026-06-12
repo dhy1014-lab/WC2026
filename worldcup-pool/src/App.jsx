@@ -291,7 +291,6 @@ const RESULT_GRACE_MS = 3 * 60 * 60 * 1000;
 function isGroupStageComplete() { return new Date() >= GROUP_STAGE_END; }
 function isGroupResultsExpected() { return new Date() >= new Date(GROUP_STAGE_END.getTime() + RESULT_GRACE_MS); }
 function isPropResultExpected(i) { return PROP_LOCKS[i] && new Date() >= new Date(PROP_LOCKS[i].getTime() + RESULT_GRACE_MS); }
-function isP2RoundResultExpected(round) { const t = P2_PROP_LOCKS[round]; return t && new Date() >= new Date(t.getTime() + RESULT_GRACE_MS); }
 
 
 // ── PHASE 2 KNOCKOUT BRACKET ─────────────────────────────────────────────────
@@ -407,6 +406,7 @@ const P2_PROP_LOCKS = {
   final: new Date("2026-07-18T16:00:00Z"), // Jul 18 noon ET (approx)
 };
 function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round] || new Date("2099-01-01")); }
+function isP2RoundResultExpected(round) { const t = P2_PROP_LOCKS[round]; return t && new Date() >= new Date(t.getTime() + RESULT_GRACE_MS); }
 
 function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot, p2PropPicks, goldenBootPick) {
   let pts = 0;
