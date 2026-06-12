@@ -290,6 +290,7 @@ const GROUP_STAGE_END = new Date("2026-06-28T04:00:00Z"); // Jun 27 midnight PT
 const RESULT_GRACE_MS = 3 * 60 * 60 * 1000;
 function isGroupStageComplete() { return new Date() >= GROUP_STAGE_END; }
 function isGroupResultsExpected() { return new Date() >= new Date(GROUP_STAGE_END.getTime() + RESULT_GRACE_MS); }
+function isPropLocked(i) { return new Date() >= PROP_LOCKS[i]; }
 function isPropResultExpected(i) { return PROP_LOCKS[i] && new Date() >= new Date(PROP_LOCKS[i].getTime() + RESULT_GRACE_MS); }
 
 
