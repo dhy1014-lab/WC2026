@@ -3979,8 +3979,9 @@ export default function WorldCupPool() {
                       📊 Group pts are projected — group stage final standings lock Jun 27
                     </div>
                   )}
-                  {leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
-                  {leaderboard.map((p, i) => {
+                  {lbLoading && <div style={{ color:"#9ab8a0", textAlign:"center", padding:20 }}>⏳ Loading…</div>}
+                  {!lbLoading && leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
+                  {!lbLoading && leaderboard.map((p, i) => {
                     const pred = predictions[p.id];
                     const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
                     const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
@@ -4002,7 +4003,15 @@ export default function WorldCupPool() {
                             const grpColor = grpDone >= 12 ? "#9ab8a0" : grpsLocked ? "#9ab8a0" : "#f0a020";
                             const unlockedTotal = DAILY_PROPS.filter((_,i) => !isPropLocked(i)).length;
                             const unlockedDone = pred ? (pred.propPicks||[]).filter((x,i) => x !== null && !isPropLocked(i)).length : 0;
-                            const allUnlockedDone = unlockedTotal === 0 || unlockedDone >= unlockedTotal;
+                            const totalAnswered = pred ? (pred.propPicks||[]).filter(x => x !== null).length : 0;
+                            // After group rankings lock, show total answered vs total props
+                            // Before lock, show only unlocked props (actionable)
+                            const prpDisplay = grpsLocked
+                              ? `${totalAnswered}/34`
+                              : `${unlockedDone}/${unlockedTotal || 34}`;
+                            const allUnlockedDone = grpsLocked
+                              ? totalAnswered >= 34
+                              : (unlockedTotal === 0 || unlockedDone >= unlockedTotal);
                             const prpColor = allUnlockedDone ? "#9ab8a0" : "#f0a020";
                             const tbP1ok = pred?.tbP1 !== undefined && pred?.tbP1 !== null && pred?.tbP1 !== "";
                             const tbColor = tbP1ok ? "#9ab8a0" : grpsLocked ? "#9ab8a0" : "#f0a020";
@@ -4011,7 +4020,7 @@ export default function WorldCupPool() {
                               <div style={{ display:"flex", gap:8, fontSize:10, marginTop:2, flexWrap:"wrap" }}>
                                 <span style={{ color:grpColor }}>{grpFlag} {grpDone}/12 groups</span>
                                 <span style={{ color:"#555" }}>·</span>
-                                <span style={{ color:prpColor }}>{allUnlockedDone ? "✅" : "⚠️"} {unlockedDone}/{unlockedTotal || 34} props</span>
+                                <span style={{ color:prpColor }}>{allUnlockedDone ? "✅" : "⚠️"} {prpDisplay} props</span>
                                 <span style={{ color:"#555" }}>·</span>
                                 <span style={{ color:tbColor }}>{tbFlag} TB</span>
                               </div>
@@ -4105,8 +4114,9 @@ export default function WorldCupPool() {
                       )}
                     </div>
                   </div>
-                  {lb2.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
-                  {lb2.map((p, i) => {
+                  {lbLoading && <div style={{ color:"#9ab8a0", textAlign:"center", padding:20 }}>⏳ Loading…</div>}
+                  {!lbLoading && lb2.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
+                  {!lbLoading && lb2.map((p, i) => {
                     const pred = predictions[p.id];
                     const p2BracketDone = pred ? Object.keys(pred.phase2Picks||{}).filter(k => !k.startsWith("p2_") && k !== "goldenBoot").length : 0;
                     const p2PropsDone = pred ? Object.keys(pred.p2PropPicks||{}).filter(k => pred.p2PropPicks[k] !== null).length : 0;
