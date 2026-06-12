@@ -2448,7 +2448,21 @@ export default function WorldCupPool() {
         </div>
         <div style={{ display:"flex", gap:6, alignItems:"center" }}>
           {["home","leaderboard"].map(s => (
-            <button key={s} style={S.navBtn(screen===s)} onClick={() => setScreen(s)}>
+            <button key={s} style={S.navBtn(screen===s)} onClick={() => {
+              setScreen(s);
+              if (s === "leaderboard") {
+                dbLoad().then(data => {
+                  setPlayers(data.players);
+                  setPredictions(data.predictions);
+                  setPaid(data.paid || {});
+                  if (data.liveResults) setLiveResults(data.liveResults);
+                  if (data.livePhase2) setLivePhase2(data.livePhase2);
+                  if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+                  if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
+                  setFetchStatus("done");
+                }).catch(() => {});
+              }
+            }}>
               {s==="home" ? "🏠 Home" : "🏆 Board"}
             </button>
           ))}
@@ -3279,12 +3293,14 @@ export default function WorldCupPool() {
 
               // Per-cell override helpers
               const setOverride = async (key) => {
-                const updated = { ...adminOverrides, [key]: true };
+                const fresh = await dbLoad();
+                const updated = { ...(fresh.adminOverrides || {}), [key]: true };
                 setAdminOverrides(updated);
                 await dbPatch("adminOverrides", updated);
               };
               const clearOverride = async (key) => {
-                const updated = { ...adminOverrides };
+                const fresh = await dbLoad();
+                const updated = { ...(fresh.adminOverrides || {}) };
                 delete updated[key];
                 setAdminOverrides(updated);
                 await dbPatch("adminOverrides", updated);
@@ -3894,8 +3910,20 @@ export default function WorldCupPool() {
           <div>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>🏆 Leaderboard</h2>
-              <button onClick={refreshScores} disabled={fetchStatus==="loading"} style={{ ...S.btn, fontSize:11, padding:"6px 12px", background:fetchStatus==="loading"?"#444":"linear-gradient(90deg,#c8a84b,#f0d060)" }}>
-                {fetchStatus==="loading" ? "⏳ Updating…" : "🔄 Refresh"}
+              <button onClick={async () => {
+                try {
+                  const data = await dbLoad();
+                  setPlayers(data.players);
+                  setPredictions(data.predictions);
+                  setPaid(data.paid || {});
+                  if (data.liveResults) setLiveResults(data.liveResults);
+                  if (data.livePhase2) setLivePhase2(data.livePhase2);
+                  if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+                  if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
+                  setFetchStatus("done");
+                } catch {}
+              }} style={{ ...S.btn, fontSize:11, padding:"6px 12px" }}>
+                🔄 Reload
               </button>
             </div>
 
