@@ -25,6 +25,7 @@ async function dbLoad() {
 async function dbSave(players, predictions, paid, settings, goldenBoot) {
   const body = { players, predictions, paid, settings };
   if (goldenBoot !== undefined) body.goldenBoot = goldenBoot;
+  console.log("[dbSave] PATCH pool.json keys:", Object.keys(body));
   const r = await fetch(`${DB_URL}/pool.json`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -35,6 +36,7 @@ async function dbSave(players, predictions, paid, settings, goldenBoot) {
 
 // Patch a single top-level key in pool without overwriting others
 async function dbPatch(key, value) {
+  console.log("[dbPatch] PUT pool/"+key+".json value:", JSON.stringify(value)?.substring(0,100));
   const r = await fetch(`${DB_URL}/pool/${key}.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
