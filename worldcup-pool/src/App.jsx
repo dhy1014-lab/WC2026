@@ -3898,7 +3898,7 @@ export default function WorldCupPool() {
 
             {/* Sub-tabs */}
             <div style={{ display:"flex", gap:4, marginBottom:14 }}>
-              {[["standings","🏅 Standings"],["chart","📈 Chart"],["h2h","⚔️ H2H"]].map(([t,l]) => (
+              {[["standings","🏅 Standings"],["chart","📈 Chart"],["h2h","⚔️ H2H"],["results","📋 Results"]].map(([t,l]) => (
                 <button key={t} style={S.tab(lbTab===t)} onClick={() => setLbTab(t)}>{l}</button>
               ))}
             </div>
@@ -3969,9 +3969,7 @@ export default function WorldCupPool() {
                             );
                           })()}
                         </div>
-                        <div style={{ textAlign:"right" }}>
-                          <div style={{ fontSize:26, fontWeight:"bold", color: isGroupStageComplete() ? "#f0d060" : "rgba(240,208,96,0.6)" }}>{p.pts}</div>
-                          <div style={{ fontSize:9, color:"#9ab8a0" }}>/ {MAX_PTS} pts</div>
+                        <div style={{ textAlign:"right", minWidth:130 }}>
                           {(() => {
                             const pred = predictions[p.id] || {};
                             let gPts = 0;
@@ -3980,17 +3978,33 @@ export default function WorldCupPool() {
                               if (actual) gPts += calcGroupRankingPoints(ranking, actual);
                             });
                             let pPts = 0;
-                            (pred.propPicks || []).forEach((pick, i) => {
-                              const actual = liveResults?.propResults?.[i];
+                            (pred.propPicks || []).forEach((pick, idx) => {
+                              const actual = liveResults?.propResults?.[idx];
                               if (actual === null || actual === undefined) return;
-                              if (pick === actual) pPts += actual ? DAILY_PROPS[i].ptsYes : DAILY_PROPS[i].ptsNo;
+                              if (pick === actual) pPts += actual ? DAILY_PROPS[idx].ptsYes : DAILY_PROPS[idx].ptsNo;
                             });
                             const grpFlux = !isGroupStageComplete();
                             return (
-                              <div style={{ fontSize:9, color:"rgba(154,184,160,0.6)", marginTop:2 }}>
-                                <span title="Group ranking points (provisional)">{grpFlux ? "~" : ""}{gPts}g</span>
-                                {pPts > 0 && <><span style={{ margin:"0 3px", opacity:0.4 }}>+</span><span title="Settled prop points">{pPts}p</span></>}
-                              </div>
+                              <table style={{ borderCollapse:"collapse", marginLeft:"auto", fontSize:11 }}>
+                                <tbody>
+                                  {pPts > 0 && (
+                                    <tr>
+                                      <td style={{ color:"#9ab8a0", paddingRight:8, textAlign:"right" }}>props</td>
+                                      <td style={{ color:"#f0e6c8", fontWeight:"bold", textAlign:"right" }}>{pPts}</td>
+                                    </tr>
+                                  )}
+                                  <tr>
+                                    <td style={{ color: grpFlux ? "rgba(154,184,160,0.5)" : "#9ab8a0", paddingRight:8, textAlign:"right", fontStyle: grpFlux ? "italic" : "normal" }}>
+                                      {grpFlux ? "~groups" : "groups"}
+                                    </td>
+                                    <td style={{ color: grpFlux ? "rgba(240,208,96,0.45)" : "#f0e6c8", fontWeight:"bold", textAlign:"right", fontStyle: grpFlux ? "italic" : "normal" }}>{gPts}</td>
+                                  </tr>
+                                  <tr style={{ borderTop:"1px solid rgba(255,255,255,0.1)" }}>
+                                    <td style={{ color:"#9ab8a0", paddingRight:8, textAlign:"right", paddingTop:3 }}>total</td>
+                                    <td style={{ color:"#f0d060", fontWeight:"bold", fontSize:18, textAlign:"right", paddingTop:3 }}>{p.pts}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
                             );
                           })()}
                         </div>
@@ -4190,6 +4204,104 @@ export default function WorldCupPool() {
                 <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10, textAlign:"center" }}>The comparison panel opens as a full overlay once both are selected.</div>
               </div>
             )}
+            )}
+
+            {/* ── RESULTS TAB ── */}
+            {lbTab==="results" && (() => {
+              const settledProps = DAILY_PROPS.map((prop, i) => ({
+                ...prop, i,
+                result: liveResults?.propResults?.[i] ?? null,
+              }));
+              const anySettled = settledProps.some(p => p.result !== null);
+
+              return (
+                <div>
+                  {/* GROUP RESULTS */}
+                  <div style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>
+                      🏆 GROUP STANDINGS {!isGroupStageComplete() && <span style={{ color:"rgba(240,208,96,0.5)", fontWeight:"normal", fontStyle:"italic" }}>— provisional</span>}
+                    </div>
+                    {Object.keys(TEAMS_BY_GROUP).map(g => {
+                      const ranking = liveResults?.groupRankings?.[g];
+                      return (
+                        <div key={g} style={{ marginBottom:6, background:"rgba(255,255,255,0.03)", borderRadius:6, padding:"8px 10px", border:"1px solid rgba(255,255,255,0.07)" }}>
+                          <div style={{ fontSize:10, fontWeight:"bold", color:"#f0d060", marginBottom:5, letterSpacing:1 }}>GROUP {g}</div>
+                          {ranking ? (
+                            <div>
+                              {ranking.map((team, pos) => (
+                                <div key={team} style={{ display:"flex", alignItems:"center", gap:8, padding:"2px 0", borderBottom: pos < 3 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                                  <span style={{ fontSize:10, color: pos < 2 ? "#8fffb0" : "rgba(154,184,160,0.5)", minWidth:14, textAlign:"right" }}>{pos+1}</span>
+                                  <span style={{ fontSize:11, color: pos < 2 ? "#f0e6c8" : "rgba(240,230,200,0.5)", flex:1 }}>{team}</span>
+                                  {pos === 1 && <span style={{ fontSize:8, color:"#8fffb0", opacity:0.7 }}>↑ advance</span>}
+                                  {pos === 2 && <span style={{ fontSize:8, color:"rgba(154,184,160,0.4)" }}>3rd</span>}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize:10, color:"rgba(154,184,160,0.4)", fontStyle:"italic" }}>No results yet</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* PROP RESULTS */}
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 PROP SETTLEMENTS</div>
+                    {!anySettled && (
+                      <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", textAlign:"center" }}>No props settled yet — check back after matches complete.</div>
+                    )}
+                    {[...new Set(settledProps.map(p => p.date))].map(date => {
+                      const dayProps = settledProps.filter(p => p.date === date);
+                      const anyDaySettled = dayProps.some(p => p.result !== null);
+                      if (!anyDaySettled) return null;
+                      return (
+                        <div key={date} style={{ marginBottom:10 }}>
+                          <div style={{ fontSize:10, color:"#9ab8a0", fontWeight:"bold", marginBottom:4, letterSpacing:1 }}>{date}</div>
+                          {dayProps.map(prop => {
+                            const settled = prop.result !== null;
+                            const yesWon = prop.result === true;
+                            const noWon = prop.result === false;
+                            // Count how many pool players got it right
+                            const correct = players.filter(pl => {
+                              const pick = predictions[pl.id]?.propPicks?.[prop.i];
+                              return pick !== null && pick !== undefined && pick === prop.result;
+                            }).length;
+                            const total = players.filter(pl => {
+                              const pick = predictions[pl.id]?.propPicks?.[prop.i];
+                              return pick !== null && pick !== undefined;
+                            }).length;
+                            return (
+                              <div key={prop.i} style={{ background: settled ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)", borderRadius:6, padding:"8px 10px", marginBottom:5, border:`1px solid ${settled?"rgba(255,255,255,0.09)":"rgba(255,255,255,0.04)"}` }}>
+                                <div style={{ display:"flex", alignItems:"flex-start", gap:8 }}>
+                                  <div style={{ fontSize:13, marginTop:1 }}>{settled ? (yesWon ? "✅" : "❌") : "⏳"}</div>
+                                  <div style={{ flex:1 }}>
+                                    <div style={{ fontSize:11, color: settled ? "#f0e6c8" : "rgba(240,230,200,0.5)" }}>{prop.q}</div>
+                                    <div style={{ display:"flex", gap:10, marginTop:4, flexWrap:"wrap" }}>
+                                      <span style={{ fontSize:10, color: yesWon ? "#8fffb0" : "rgba(154,184,160,0.5)", fontWeight: yesWon ? "bold" : "normal" }}>
+                                        YES {yesWon ? "✓" : ""} · {prop.ptsYes}pts
+                                      </span>
+                                      <span style={{ fontSize:10, color: noWon ? "#8fffb0" : "rgba(154,184,160,0.5)", fontWeight: noWon ? "bold" : "normal" }}>
+                                        NO {noWon ? "✓" : ""} · {prop.ptsNo}pts
+                                      </span>
+                                      {settled && total > 0 && (
+                                        <span style={{ fontSize:10, color:"#9ab8a0", marginLeft:"auto" }}>
+                                          {correct}/{total} got it right
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
