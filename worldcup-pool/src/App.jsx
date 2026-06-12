@@ -3237,6 +3237,7 @@ export default function WorldCupPool() {
                     <div style={{ flex:1 }}>
                       <span style={{ fontSize:14, color:"#f0e6c8" }}>{displayName(p)}</span>
                       <span style={{ fontSize:11, color:"#9ab8a0", marginLeft:8 }}>{predictions[p.id] ? "✓ picks" : "no picks"}</span>
+                      <div style={{ fontSize:9, color:"rgba(154,184,160,0.45)", marginTop:2, fontFamily:"monospace", userSelect:"all" }}>{p.id}</div>
                     </div>
                     <div style={{ display:"flex", gap:6, alignItems:"center" }}>
                       {["cash","venmo","unpaid"].map(method => {
