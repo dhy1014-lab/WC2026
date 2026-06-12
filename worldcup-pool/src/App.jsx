@@ -287,8 +287,11 @@ const PROP_LOCKS = [
 
 function isGroupRankingsLocked() { return new Date() >= GROUP_RANKINGS_LOCK; }
 const GROUP_STAGE_END = new Date("2026-06-28T04:00:00Z"); // Jun 27 midnight PT
+const RESULT_GRACE_MS = 3 * 60 * 60 * 1000;
 function isGroupStageComplete() { return new Date() >= GROUP_STAGE_END; }
-function isPropLocked(i) { return new Date() >= PROP_LOCKS[i]; }
+function isGroupResultsExpected() { return new Date() >= new Date(GROUP_STAGE_END.getTime() + RESULT_GRACE_MS); }
+function isPropResultExpected(i) { return PROP_LOCKS[i] && new Date() >= new Date(PROP_LOCKS[i].getTime() + RESULT_GRACE_MS); }
+function isP2RoundResultExpected(round) { const t = P2_PROP_LOCKS[round]; return t && new Date() >= new Date(t.getTime() + RESULT_GRACE_MS); }
 
 
 // ── PHASE 2 KNOCKOUT BRACKET ─────────────────────────────────────────────────
@@ -2114,10 +2117,10 @@ export default function WorldCupPool() {
   // Count results that are past their lock time but still null — used to badge the audit tab
   const needsOverrideCount = isAdmin ? (() => {
     let count = 0;
-    if (isGroupStageComplete()) Object.keys(TEAMS_BY_GROUP).forEach(g => { if (!liveResults?.groupRankings?.[g]) count++; });
-    DAILY_PROPS.forEach((_, i) => { if (isPropLocked(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) count++; });
-    Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => { if (isP2PropRoundLocked(round)) matches.forEach(m => { if (!livePhase2?.[m.id]) count++; }); });
-    P2_PROPS.forEach(prop => { if (isP2PropRoundLocked(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) count++; });
+    if (isGroupResultsExpected()) Object.keys(TEAMS_BY_GROUP).forEach(g => { if (!liveResults?.groupRankings?.[g]) count++; });
+    DAILY_PROPS.forEach((_, i) => { if (isPropResultExpected(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) count++; });
+    Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => { if (isP2RoundResultExpected(round)) matches.forEach(m => { if (!livePhase2?.[m.id]) count++; }); });
+    P2_PROPS.forEach(prop => { if (isP2RoundResultExpected(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) count++; });
     return count;
   })() : 0;
 
@@ -3400,20 +3403,20 @@ export default function WorldCupPool() {
               // Compute items that should be settled by now but are still null (API failed to resolve)
               const needsOverride = [];
               // P1 groups: group stage complete but ranking still null
-              if (isGroupStageComplete()) {
+              if (isGroupResultsExpected()) {
                 Object.keys(TEAMS_BY_GROUP).forEach(g => {
                   if (!liveResults?.groupRankings?.[g]) needsOverride.push({ phase:"p1", type:"group", label:`Group ${g} ranking`, key:"groupRankings_"+g });
                 });
               }
               // P1 props: lock time passed but result still null
               DAILY_PROPS.forEach((prop, i) => {
-                if (isPropLocked(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) {
+                if (isPropResultExpected(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) {
                   needsOverride.push({ phase:"p1", type:"prop", label:`${prop.date} — ${prop.q.substring(0,50)}…`, key:"propResults_"+i });
                 }
               });
               // P2 bracket: round lock passed but match winner still null
               Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
-                if (isP2PropRoundLocked(round)) {
+                if (isP2RoundResultExpected(round)) {
                   matches.forEach(m => {
                     if (!livePhase2?.[m.id]) needsOverride.push({ phase:"p2", type:"bracket", label:`${ROUND_LABELS[round]}: ${m.label}`, key:"livePhase2_"+m.id });
                   });
@@ -3421,7 +3424,7 @@ export default function WorldCupPool() {
               });
               // P2 props: round lock passed but result still null
               P2_PROPS.forEach(prop => {
-                if (isP2PropRoundLocked(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) {
+                if (isP2RoundResultExpected(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) {
                   needsOverride.push({ phase:"p2", type:"prop", label:`${prop.round.toUpperCase()} — ${prop.q.substring(0,50)}…`, key:"liveP2Props_"+prop.id });
                 }
               });
