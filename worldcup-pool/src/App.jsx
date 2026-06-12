@@ -619,12 +619,13 @@ Return ONLY the JSON.`;
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
+      max_tokens: 8000,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: prompt }],
     }),
   });
   const data = await res.json();
+  if (data.error) throw new Error(data.error.message || "API error");
   const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   const cleaned = raw.replace(/```json|```/g, "").trim();
   const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
@@ -636,7 +637,12 @@ Return ONLY the JSON.`;
     matchday: "Tournament starts June 11",
     lastUpdated: new Date().toISOString(),
   };
-  return JSON.parse(cleaned.slice(s, e + 1));
+  try {
+    return JSON.parse(cleaned.slice(s, e + 1));
+  } catch {
+    // JSON was truncated (max_tokens hit mid-output) — return null so existing data is preserved
+    throw new Error("API response was truncated — try again");
+  }
 }
 
 // ── FETCH LIVE PHASE 2 RESULTS ───────────────────────────────────────────────
@@ -718,23 +724,28 @@ Return ONLY the JSON.`;
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 3000,
+      max_tokens: 8000,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: prompt }],
     }),
   });
   const data = await res.json();
+  if (data.error) throw new Error(data.error.message || "API error");
   const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   const cleaned = raw.replace(/```json|```/g, "").trim();
   const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
   if (s === -1) return null;
-  const parsed = JSON.parse(cleaned.slice(s, e + 1));
-  return {
-    knockoutWinners: parsed.knockoutWinners || null,
-    p2PropResults: parsed.p2PropResults || null,
-    goldenBootWinner: parsed.goldenBootWinner || null,
-    finalFirstGoalMinute: parsed.finalFirstGoalMinute ?? null,
-  };
+  try {
+    const parsed = JSON.parse(cleaned.slice(s, e + 1));
+    return {
+      knockoutWinners: parsed.knockoutWinners || null,
+      p2PropResults: parsed.p2PropResults || null,
+      goldenBootWinner: parsed.goldenBootWinner || null,
+      finalFirstGoalMinute: parsed.finalFirstGoalMinute ?? null,
+    };
+  } catch {
+    throw new Error("API response was truncated — try again");
+  }
 }
 
 // ── FETCH BRACKET SLOTS (one-time after group stage ends) ─────────────────────
@@ -1980,7 +1991,7 @@ export default function WorldCupPool() {
         } catch {}
       }
     } catch (e) { setFetchError(e.message); setFetchStatus("error"); }
-  }, [prevPropResults, currentPlayer, predictions, isAdmin, bracketSlots, goldenBoot]);
+  }, [prevPropResults, currentPlayer, predictions, isAdmin, bracketSlots, goldenBoot, adminOverrides, liveResults, livePhase2, liveP2Props]);
 
   useEffect(() => { refreshScores(); }, []);
 
