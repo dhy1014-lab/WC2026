@@ -876,48 +876,6 @@ Return ONLY the JSON.`;
 }
 
 // ── MATCH TICKER (live + upcoming) ───────────────────────────────────────────
-async function fetchMatchTicker() {
-  const prompt = `Search the web for today's 2026 FIFA World Cup matches (group stage June 11–27 2026).
-
-Return ONLY valid JSON, no markdown:
-{
-  "live": [
-    { "home": "Team A", "away": "Team B", "homeScore": 1, "awayScore": 0, "minute": "67'", "group": "A", "status": "LIVE" }
-  ],
-  "upcoming": [
-    { "home": "Team C", "away": "Team D", "kickoff": "noon PT", "group": "B", "status": "upcoming" }
-  ],
-  "completed": [
-    { "home": "Team E", "away": "Team F", "homeScore": 2, "awayScore": 1, "group": "C", "status": "FT" }
-  ],
-  "date": "Jun 12"
-}
-
-- live: matches currently in progress right now
-- upcoming: matches scheduled for later today (not yet kicked off)
-- completed: matches finished today
-- Use exact team names from the tournament
-- If no matches today, return empty arrays and set date to today's date
-- Return ONLY the JSON.`;
-
-  const res = await fetch("/api/scores", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 800,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  const cleaned = raw.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  if (s === -1) return null;
-  return JSON.parse(cleaned.slice(s, e + 1));
-}
-
 // ── STYLES ────────────────────────────────────────────────────────────────────
 const S = {
   page: { minHeight:"100vh", background:"linear-gradient(135deg,#0a1628 0%,#0d2040 50%,#071a14 100%)", fontFamily:"'Georgia',serif", color:"#f0e6c8" },
@@ -979,6 +937,13 @@ function CountdownTimer() {
   const mins  = Math.floor((diff % 3600000) / 60000);
   const secs  = Math.floor((diff % 60000) / 1000);
 
+  if (diff === 0) return (
+    <div style={{ ...S.card, background:"linear-gradient(135deg,rgba(10,22,40,0.9),rgba(13,32,64,0.9))", borderColor:"rgba(200,168,75,0.5)", textAlign:"center", padding:"18px 14px" }}>
+      <div style={{ fontSize:13, fontWeight:"bold", color:"#f0d060", letterSpacing:2 }}>🏆 TOURNAMENT UNDERWAY</div>
+      <div style={{ fontSize:11, color:"#9ab8a0", marginTop:6 }}>2026 FIFA World Cup · Jun 11 – Jul 19</div>
+    </div>
+  );
+
   const unit = (val, label) => (
     <div style={{ textAlign:"center", minWidth:52 }}>
       <div style={{ fontSize:28, fontWeight:"bold", color:"#f0d060", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>
@@ -1023,67 +988,6 @@ function ItalyCounter() {
       <div style={{ fontSize:11, color:"rgba(200,180,120,0.55)", fontVariantNumeric:"tabular-nums", letterSpacing:0.5 }}>
         {days.toLocaleString()}d {String(hours).padStart(2,"0")}h {String(mins).padStart(2,"0")}m {String(secs).padStart(2,"0")}s
       </div>
-    </div>
-  );
-}
-
-function MatchCard({ match, isLive }) {
-  const homeCode = COUNTRY_CODE[match.home];
-  const awayCode = COUNTRY_CODE[match.away];
-  const flag = (code) => code
-    ? <img src={`https://flagcdn.com/24x18/${code}.png`} alt="" style={{ width:22, height:16, objectFit:"cover", borderRadius:2, verticalAlign:"middle" }} />
-    : <span>🏳️</span>;
-
-  const statusColor = isLive ? "#8fffb0" : match.status === "FT" ? "#9ab8a0" : "#f0d060";
-  const statusBg    = isLive ? "rgba(0,200,80,0.15)" : match.status === "FT" ? "rgba(255,255,255,0.05)" : "rgba(200,168,75,0.1)";
-
-  return (
-    <div style={{ background:statusBg, border:`1px solid ${isLive?"rgba(0,200,80,0.35)":match.status==="FT"?"rgba(255,255,255,0.08)":"rgba(200,168,75,0.25)"}`, borderRadius:8, padding:"10px 14px", marginBottom:6 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-        <span style={{ fontSize:10, color:statusColor, fontWeight:"bold" }}>
-          {isLive ? `🔴 LIVE ${match.minute||""}` : match.status === "FT" ? "✅ FT" : `🕐 ${match.kickoff||""}`}
-        </span>
-        <span style={{ fontSize:10, color:"#9ab8a0" }}>Group {match.group}</span>
-      </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-          {flag(homeCode)}
-          <span style={{ fontSize:13, color:"#f0e6c8", fontWeight: isLive||match.status==="FT"?"bold":"normal" }}>{match.home}</span>
-        </div>
-        <div style={{ fontSize:isLive||match.status==="FT"?20:14, fontWeight:"bold", color:"#f0d060", textAlign:"center", minWidth:48 }}>
-          {isLive || match.status === "FT"
-            ? `${match.homeScore ?? 0}–${match.awayScore ?? 0}`
-            : "vs"}
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"flex-end" }}>
-          <span style={{ fontSize:13, color:"#f0e6c8", fontWeight: isLive||match.status==="FT"?"bold":"normal" }}>{match.away}</span>
-          {flag(awayCode)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MatchTicker({ ticker, loading, onRefresh }) {
-  if (!ticker) return null;
-  const { live = [], upcoming = [], completed = [], date } = ticker;
-  const hasLive = live.length > 0;
-  const hasAny  = live.length + upcoming.length + completed.length > 0;
-
-  return (
-    <div style={{ ...S.card, borderColor: hasLive ? "rgba(0,200,80,0.4)" : "rgba(200,168,75,0.3)", background: hasLive ? "rgba(0,60,20,0.2)" : "rgba(255,255,255,0.03)" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-        <div style={{ fontSize:11, fontWeight:"bold", color: hasLive?"#8fffb0":"#f0d060", letterSpacing:1 }}>
-          {hasLive ? "🔴 LIVE NOW" : "📅 TODAY'S MATCHES"} · {date}
-        </div>
-        <button onClick={onRefresh} disabled={loading} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:5, padding:"3px 8px", color:"#9ab8a0", cursor:loading?"default":"pointer", fontSize:10 }}>
-          {loading ? "⏳" : "🔄"}
-        </button>
-      </div>
-      {!hasAny && <div style={{ fontSize:12, color:"#9ab8a0", textAlign:"center", padding:"8px 0" }}>No matches today · check back soon</div>}
-      {live.map((m, i)      => <MatchCard key={`live-${i}`}      match={m} isLive={true} />)}
-      {upcoming.map((m, i)  => <MatchCard key={`upcoming-${i}`}  match={m} isLive={false} />)}
-      {completed.map((m, i) => <MatchCard key={`completed-${i}`} match={m} isLive={false} />)}
     </div>
   );
 }
@@ -1801,8 +1705,6 @@ export default function WorldCupPool() {
   const [lbPhase, setLbPhase]             = useState("p1"); // "p1" | "p2"
   const [adminPinMsg, setAdminPinMsg]     = useState("");
   const [prevPropResults, setPrevPropResults] = useState(null);
-  const [ticker, setTicker]                   = useState(null);
-  const [tickerLoading, setTickerLoading]     = useState(false);
   const [showHowItWorks, setShowHowItWorks]   = useState(false);
   const [rulesTab, setRulesTab]               = useState("pool");
   const [newRealName, setNewRealName]         = useState("");
@@ -1880,7 +1782,8 @@ export default function WorldCupPool() {
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
         if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
-        if (data.liveResults) setLiveResults(data.liveResults);
+        if (data.liveResults) { setLiveResults(data.liveResults); setFetchStatus("done"); }
+        else setFetchStatus("done");
         if (data.livePhase2) setLivePhase2(data.livePhase2);
         if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
       }).catch(() => {});
@@ -1893,6 +1796,13 @@ export default function WorldCupPool() {
   const refreshScores = useCallback(async () => {
     setFetchStatus("loading"); setFetchError("");
     try {
+      // Read fresh state from Firebase before merging — never rely on potentially stale React state
+      const freshData = await dbLoad();
+      const freshOverrides = freshData.adminOverrides || {};
+      const freshLiveResults = freshData.liveResults || {};
+      const freshLivePhase2 = freshData.livePhase2 || {};
+      const freshLiveP2Props = freshData.liveP2Props || {};
+
       // ── P1: group stage results + daily props ──
       const r = await fetchLiveResults();
       // Detect newly settled props → trigger confetti if current player won
@@ -1916,11 +1826,11 @@ export default function WorldCupPool() {
       // Merge API result with any admin-overridden cells before persisting
       const mergedGroupRankings = { ...normalizedGroupRankings };
       Object.keys(mergedGroupRankings).forEach(g => {
-        if (adminOverrides["groupRankings_"+g]) mergedGroupRankings[g] = liveResults?.groupRankings?.[g] || mergedGroupRankings[g];
+        if (freshOverrides["groupRankings_"+g]) mergedGroupRankings[g] = freshLiveResults?.groupRankings?.[g] || mergedGroupRankings[g];
       });
       const mergedPropResults = [...(r.propResults || [])];
       mergedPropResults.forEach((_, i) => {
-        if (adminOverrides["propResults_"+i] && liveResults?.propResults?.[i] !== undefined) mergedPropResults[i] = liveResults.propResults[i];
+        if (freshOverrides["propResults_"+i] && freshLiveResults?.propResults?.[i] !== undefined && freshLiveResults?.propResults?.[i] !== null) mergedPropResults[i] = freshLiveResults.propResults[i];
       });
       const mergedLiveResults = { ...r, groupRankings: mergedGroupRankings, propResults: mergedPropResults };
       setLiveResults(mergedLiveResults); setLastFetched(new Date()); setFetchStatus("done");
@@ -1963,7 +1873,7 @@ export default function WorldCupPool() {
               Object.entries(p2.knockoutWinners).forEach(([k, v]) => { normalizedWinners[k] = v ? normalizeTeamName(v) : v; });
               const mergedPhase2 = { ...normalizedWinners };
               Object.keys(mergedPhase2).forEach(matchId => {
-                if (adminOverrides["livePhase2_"+matchId] && livePhase2?.[matchId] !== undefined) mergedPhase2[matchId] = livePhase2[matchId];
+                if (freshOverrides["livePhase2_"+matchId] && freshLivePhase2?.[matchId] !== undefined) mergedPhase2[matchId] = freshLivePhase2[matchId];
               });
               // Carry forward finalFirstGoalMinute once known — never overwrite with null
               if (p2.finalFirstGoalMinute != null) mergedPhase2.finalFirstGoalMinute = p2.finalFirstGoalMinute;
@@ -1973,9 +1883,9 @@ export default function WorldCupPool() {
             }
 
             if (p2.p2PropResults) {
-              const mergedP2Props = { ...p2.p2PropResults };
+              const mergedP2Props = { ...(p2.p2PropResults || {}) };
               Object.keys(mergedP2Props).forEach(propId => {
-                if (adminOverrides["liveP2Props_"+propId] && liveP2Props?.[propId] !== undefined) mergedP2Props[propId] = liveP2Props[propId];
+                if (freshOverrides["liveP2Props_"+propId] && freshLiveP2Props?.[propId] !== undefined) mergedP2Props[propId] = freshLiveP2Props[propId];
               });
               setLiveP2Props(mergedP2Props);
               await dbPatch("liveP2Props", mergedP2Props);
@@ -1992,26 +1902,6 @@ export default function WorldCupPool() {
       }
     } catch (e) { setFetchError(e.message); setFetchStatus("error"); }
   }, [prevPropResults, currentPlayer, predictions, isAdmin, bracketSlots, goldenBoot, adminOverrides, liveResults, livePhase2, liveP2Props]);
-
-  useEffect(() => { refreshScores(); }, []);
-
-  const refreshTicker = useCallback(async () => {
-    if (new Date() < TOURNAMENT_START) return;
-    setTickerLoading(true);
-    try {
-      const t = await fetchMatchTicker();
-      setTicker(t);
-    } catch {}
-    setTickerLoading(false);
-  }, []);
-
-  // Load ticker on mount + poll every 2 minutes during tournament
-  useEffect(() => {
-    if (new Date() < TOURNAMENT_START) return;
-    refreshTicker();
-    const iv = setInterval(refreshTicker, 120000);
-    return () => clearInterval(iv);
-  }, []);
 
   async function register() {
     const name = newName.trim();
@@ -2674,11 +2564,8 @@ export default function WorldCupPool() {
               );
             })()}
 
-            {/* Countdown or live ticker */}
-            {new Date() < TOURNAMENT_START
-              ? <CountdownTimer />
-              : <MatchTicker ticker={ticker} loading={tickerLoading} onRefresh={refreshTicker} />
-            }
+            {/* Countdown or matchday status */}
+            <CountdownTimer />
 
             {/* 💵 Payout structure */}
             {(() => {
@@ -4083,8 +3970,29 @@ export default function WorldCupPool() {
                           })()}
                         </div>
                         <div style={{ textAlign:"right" }}>
-                          <div style={{ fontSize:26, fontWeight:"bold", color:"#f0d060" }}>{p.pts}</div>
+                          <div style={{ fontSize:26, fontWeight:"bold", color: isGroupStageComplete() ? "#f0d060" : "rgba(240,208,96,0.6)" }}>{p.pts}</div>
                           <div style={{ fontSize:9, color:"#9ab8a0" }}>/ {MAX_PTS} pts</div>
+                          {(() => {
+                            const pred = predictions[p.id] || {};
+                            let gPts = 0;
+                            Object.entries(pred.groupRankings || {}).forEach(([g, ranking]) => {
+                              const actual = liveResults?.groupRankings?.[g];
+                              if (actual) gPts += calcGroupRankingPoints(ranking, actual);
+                            });
+                            let pPts = 0;
+                            (pred.propPicks || []).forEach((pick, i) => {
+                              const actual = liveResults?.propResults?.[i];
+                              if (actual === null || actual === undefined) return;
+                              if (pick === actual) pPts += actual ? DAILY_PROPS[i].ptsYes : DAILY_PROPS[i].ptsNo;
+                            });
+                            const grpFlux = !isGroupStageComplete();
+                            return (
+                              <div style={{ fontSize:9, color:"rgba(154,184,160,0.6)", marginTop:2 }}>
+                                <span title="Group ranking points (provisional)">{grpFlux ? "~" : ""}{gPts}g</span>
+                                {pPts > 0 && <><span style={{ margin:"0 3px", opacity:0.4 }}>+</span><span title="Settled prop points">{pPts}p</span></>}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
