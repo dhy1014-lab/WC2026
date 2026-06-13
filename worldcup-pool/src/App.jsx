@@ -1776,8 +1776,9 @@ export default function WorldCupPool() {
     loadReactions().then(setReactions).catch(() => {});
   }, []);
 
-  // Poll Firebase every 30s
+  // Poll Firebase every 30s — skip for admin sessions to prevent override conflicts
   useEffect(() => {
+    if (isAdmin) return; // admin uses manual Reload button instead
     const iv = setInterval(() => {
       dbLoad().then(data => {
         setPlayers(data.players); setPredictions(data.predictions); setPaid(data.paid || {});
@@ -1788,13 +1789,13 @@ export default function WorldCupPool() {
         if (data.liveResults) { setLiveResults(data.liveResults); setFetchStatus("done"); }
         else setFetchStatus("done");
         if (data.livePhase2) setLivePhase2(data.livePhase2);
-        if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
+        if (data.adminOverrides) { console.log("[30s poll] adminOverrides:", JSON.stringify(data.adminOverrides)); setAdminOverrides(data.adminOverrides); }
       }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
     }, 30000);
     return () => clearInterval(iv);
-  }, []);
+  }, [isAdmin]);
 
   const refreshScores = useCallback(async () => {
     setFetchStatus("loading"); setFetchError("");
@@ -3298,17 +3299,25 @@ export default function WorldCupPool() {
 
               // Per-cell override helpers
               const setOverride = async (key) => {
+                console.log("[setOverride] START key:", key);
                 const fresh = await dbLoad();
+                console.log("[setOverride] fresh adminOverrides:", JSON.stringify(fresh.adminOverrides));
                 const updated = { ...(fresh.adminOverrides || {}), [key]: true };
+                console.log("[setOverride] writing:", JSON.stringify(updated));
                 setAdminOverrides(updated);
                 await dbPatch("adminOverrides", updated);
+                console.log("[setOverride] DONE key:", key);
               };
               const clearOverride = async (key) => {
+                console.log("[clearOverride] START key:", key);
                 const fresh = await dbLoad();
+                console.log("[clearOverride] fresh adminOverrides:", JSON.stringify(fresh.adminOverrides));
                 const updated = { ...(fresh.adminOverrides || {}) };
                 delete updated[key];
+                console.log("[clearOverride] writing:", JSON.stringify(updated));
                 setAdminOverrides(updated);
                 await dbPatch("adminOverrides", updated);
+                console.log("[clearOverride] DONE key:", key);
               };
               const patchLiveResults = async (updated, overrideKey) => {
                 setLiveResults(updated);
