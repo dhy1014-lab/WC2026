@@ -3440,7 +3440,7 @@ export default function WorldCupPool() {
                     <div style={{ background:"rgba(255,160,50,0.12)", border:"1px solid rgba(255,160,50,0.35)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12 }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
                         <span>🔒 {Object.keys(adminOverrides).length} cell{Object.keys(adminOverrides).length>1?"s":""} manually overridden</span>
-                        <button onClick={async () => { setAdminOverrides({}); await dbPatch("adminOverrides", {}); }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
+                        <button onClick={async () => { if (!window.confirm("Clear all override flags? This won't change the result values.")) return; setAdminOverrides({}); await dbPatch("adminOverrides", {}); }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
                       </div>
                       <div style={{ fontSize:10, color:"rgba(255,176,80,0.7)" }}>
                         Use 🔐 next to each result to permanently bake it in and remove the override flag.
