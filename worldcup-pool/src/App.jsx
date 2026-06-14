@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 const DB_URL = "https://wc2026-306ec-default-rtdb.firebaseio.com";
+// Published Google Sheet (CSV) tracking daily prop results — used for admin "Import from Sheet"
+const PROP_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRwLpduDNVZFyreiOFtWhlDFtvFVKVfXcwGFfw_656YE5834VUEgsYKzCkFyzen7C0MvfP6sht2_rdZ/pub?output=csv";
 // Build marker — bump this string on each deploy. Helps identify stale tabs running old JS
 // (check browser console: a tab logging an old BUILD_ID is running outdated code and should be refreshed).
 const BUILD_ID = "2026-06-14-overrides-guard";
@@ -604,6 +606,55 @@ function calcPrizes(rankedPlayers, paid, potAmount, entryFee, payoutPcts) {
     if (pct > 0) prizes[p.id] = (prizes[p.id] || 0) + Math.round(distributable * pct);
   });
   return prizes;
+}
+
+// ── PROP RESULTS GOOGLE SHEET IMPORT ──────────────────────────────────────────
+// Minimal CSV parser — handles quoted fields with embedded commas/quotes (RFC4180-ish)
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i], next = text[i+1];
+    if (inQuotes) {
+      if (c === '"' && next === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ""; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && next === '\n') i++;
+        row.push(field); field = "";
+        if (row.length > 1 || row[0] !== "") rows.push(row);
+        row = [];
+      } else field += c;
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Fetch the published prop-results sheet and return { [propIndex]: "YES"|"NO"|"" }
+async function fetchPropSheetResults() {
+  const r = await fetch(PROP_SHEET_CSV_URL);
+  if (!r.ok) throw new Error(`Sheet fetch error ${r.status}`);
+  const text = await r.text();
+  const rows = parseCSV(text);
+  if (!rows.length) throw new Error("Sheet returned no rows");
+  const header = rows[0].map(h => h.trim().toLowerCase());
+  const idxCol = header.indexOf("#");
+  const resultCol = header.indexOf("result");
+  if (idxCol === -1 || resultCol === -1) throw new Error("Sheet missing '#' or 'Result' column");
+  const out = {};
+  for (let i = 1; i < rows.length; i++) {
+    const cols = rows[i];
+    if (!cols || cols.length <= Math.max(idxCol, resultCol)) continue;
+    const propIdx = parseInt(cols[idxCol], 10);
+    if (Number.isNaN(propIdx)) continue;
+    const result = (cols[resultCol] || "").trim().toUpperCase();
+    out[propIdx] = result === "YES" ? true : result === "NO" ? false : null;
+  }
+  return out;
 }
 
 // ── CLAUDE API FOR LIVE RESULTS ───────────────────────────────────────────────
@@ -1719,6 +1770,7 @@ export default function WorldCupPool() {
   const [livePhase2, setLivePhase2]       = useState(null);
   const [adminOverrides, setAdminOverrides] = useState({});
   const [breadcrumbs, setBreadcrumbs] = useState([]);
+  const [sheetImport, setSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const adminSessionToken = useRef(null);
   const [adminTab, setAdminTab]           = useState("settings");
   const [auditPhase, setAuditPhase]       = useState("p1");
@@ -3641,7 +3693,74 @@ export default function WorldCupPool() {
 
                       {/* Prop Results */}
                       <div style={S.card}>
-                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🎲 PROP RESULTS — toggle to override</div>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                          <span>🎲 PROP RESULTS — toggle to override</span>
+                          <button disabled={sheetImport.loading} onClick={async () => {
+                            setSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
+                            try {
+                              const sheetResults = await fetchPropSheetResults();
+                              const fresh = await dbLoad();
+                              const freshLR = fresh.liveResults || {};
+                              const freshOverrides = fresh.adminOverrides || {};
+                              const currentProps = freshLR.propResults || Array(34).fill(null);
+                              const diff = [];
+                              Object.entries(sheetResults).forEach(([idxStr, sheetVal]) => {
+                                const i = parseInt(idxStr, 10);
+                                if (i < 0 || i >= DAILY_PROPS.length) return;
+                                if (sheetVal === null) return; // blank in sheet — nothing to import
+                                const currentVal = currentProps[i];
+                                const alreadyLocked = !!freshOverrides["propResults_"+i];
+                                const changed = currentVal !== sheetVal;
+                                if (changed) {
+                                  diff.push({ i, date: DAILY_PROPS[i].date, q: DAILY_PROPS[i].q, from: currentVal, to: sheetVal, alreadyLocked });
+                                }
+                              });
+                              setSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
+                            } catch (e) {
+                              setSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
+                            }
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{sheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                        </div>
+                        {sheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {sheetImport.error}</div>}
+                        {sheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{sheetImport.done}</div>}
+                        {sheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {sheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current results.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#f0d060", marginBottom:6 }}>Changes found ({sheetImport.diff.length}):</div>
+                                {sheetImport.diff.map(d => (
+                                  <div key={d.i} style={{ fontSize:11, color:"#c8b8a0", marginBottom:4, display:"flex", gap:6, flexWrap:"wrap" }}>
+                                    <span style={{ color:"#9ab8a0", minWidth:36 }}>{d.date}</span>
+                                    <span style={{ flex:1, minWidth:120 }}>{d.q.substring(0,50)}…</span>
+                                    <span>{d.from===true?"YES":d.from===false?"NO":"—"} → <b style={{ color:d.to?"#8fffb0":"#ff9090" }}>{d.to?"YES":"NO"}</b></span>
+                                    {d.alreadyLocked && <span style={{ color:"#ffb060" }}>🔒 currently locked — will be overwritten</span>}
+                                  </div>
+                                ))}
+                                <button disabled={sheetImport.applying} onClick={async () => {
+                                  setSheetImport(s => ({ ...s, applying:true }));
+                                  try {
+                                    const fresh = await dbLoad();
+                                    const freshLR = fresh.liveResults || {};
+                                    const freshOverrides = fresh.adminOverrides || {};
+                                    const newPropResults = [...(freshLR.propResults || Array(34).fill(null))];
+                                    const newOverrides = { ...freshOverrides };
+                                    sheetImport.diff.forEach(d => { newPropResults[d.i] = d.to; newOverrides["propResults_"+d.i] = true; });
+                                    const updated = { ...freshLR, propResults: newPropResults };
+                                    setLiveResults(updated);
+                                    await dbPatch("liveResults", updated);
+                                    setAdminOverrides(newOverrides);
+                                    await dbPatch("adminOverrides", newOverrides);
+                                    setSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${sheetImport.diff.length} update(s) and locked them.` });
+                                  } catch (e) {
+                                    setSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                  }
+                                }} style={{ ...S.btn, fontSize:11, padding:"4px 12px", marginTop:6 }}>{sheetImport.applying ? "Applying…" : `Apply ${sheetImport.diff.length} change(s)`}</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                         {DAILY_PROPS.map((prop, i) => {
                           const actual = liveResults?.propResults?.[i];
                           const settled = actual !== null && actual !== undefined;
