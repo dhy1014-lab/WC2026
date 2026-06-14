@@ -1704,6 +1704,7 @@ export default function WorldCupPool() {
   const [livePhase2, setLivePhase2]       = useState(null);
   const [adminOverrides, setAdminOverrides] = useState({});
   const [breadcrumbs, setBreadcrumbs] = useState([]);
+  const adminSessionToken = useRef(null);
   const [adminTab, setAdminTab]           = useState("settings");
   const [auditPhase, setAuditPhase]       = useState("p1");
   const [expandedBreakdown, setExpandedBreakdown] = useState({});
@@ -1766,6 +1767,14 @@ export default function WorldCupPool() {
             const saved = JSON.parse(s);
             if (admin) {
               setScreen("admin");
+              // Claim the single admin session slot — boots any other active admin
+              const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+              adminSessionToken.current = token;
+              fetch(`${DB_URL}/pool/adminSession.json`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token, ts: Date.now() }),
+              }).catch(() => {});
             } else {
               const player = data.players.find(p => p.id === saved.id);
               if (player) {
@@ -1816,6 +1825,26 @@ export default function WorldCupPool() {
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
     }, 30000);
+    return () => clearInterval(iv);
+  }, [isAdmin]);
+
+  // Admin single-session enforcement — check every 20s if another admin has taken over
+  useEffect(() => {
+    if (!isAdmin) return;
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch(`${DB_URL}/pool/adminSession.json`);
+        const session = await r.json();
+        if (session && adminSessionToken.current && session.token !== adminSessionToken.current) {
+          // Another admin has logged in — boot this session
+          setIsAdmin(false);
+          setCurrentPlayer(null);
+          setScreen("home");
+          try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {}
+          alert("⚠️ You've been logged out — another admin session was started elsewhere.");
+        }
+      } catch {}
+    }, 20000);
     return () => clearInterval(iv);
   }, [isAdmin]);
 
@@ -1955,6 +1984,14 @@ export default function WorldCupPool() {
       setCurrentPlayer({ name, id: "admin" });
       setIsAdmin(true);
       try { localStorage.setItem("wc2026_session", JSON.stringify({ name, id: "admin" })); localStorage.setItem("wc2026_admin", "true"); } catch {}
+      // Claim the single admin session slot — boots any other active admin
+      const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      adminSessionToken.current = token;
+      fetch(`${DB_URL}/pool/adminSession.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, ts: Date.now() }),
+      }).catch(() => {});
       setLoginName(""); setLoginPassword("");
       setScreen("admin");
       return;
@@ -2515,7 +2552,13 @@ export default function WorldCupPool() {
           )}
           {currentPlayer ? (
             <button style={{ ...S.navBtn(false), background:"rgba(180,60,60,0.5)", color:"#ffdddd" }}
-              onClick={() => { setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }}>
+              onClick={() => {
+                if (isAdmin && adminSessionToken.current) {
+                  fetch(`${DB_URL}/pool/adminSession.json`, { method: "DELETE" }).catch(() => {});
+                  adminSessionToken.current = null;
+                }
+                setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {}
+              }}>
               Logout
             </button>
           ) : (
@@ -3195,7 +3238,13 @@ export default function WorldCupPool() {
             {/* Header */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <h2 style={{ margin:0, fontSize:20, color:"#f0d060" }}>⚙️ Admin Panel</h2>
-              <button onClick={() => { setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {} }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
+              <button onClick={() => {
+                if (adminSessionToken.current) {
+                  fetch(`${DB_URL}/pool/adminSession.json`, { method: "DELETE" }).catch(() => {});
+                  adminSessionToken.current = null;
+                }
+                setScreen("home"); setCurrentPlayer(null); setIsAdmin(false); try { localStorage.removeItem("wc2026_session"); localStorage.removeItem("wc2026_admin"); } catch {}
+              }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Logout</button>
             </div>
 
             {/* Tab bar */}
