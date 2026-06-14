@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 const DB_URL = "https://wc2026-306ec-default-rtdb.firebaseio.com";
+// Build marker — bump this string on each deploy. Helps identify stale tabs running old JS
+// (check browser console: a tab logging an old BUILD_ID is running outdated code and should be refreshed).
+const BUILD_ID = "2026-06-14-overrides-guard";
 
 async function dbLoad() {
   const r = await fetch(`${DB_URL}/pool.json`);
@@ -42,7 +45,19 @@ async function dbSave(players, predictions, paid, settings, goldenBoot) {
 }
 
 // Patch a single top-level key in pool without overwriting others
-async function dbPatch(key, value) {
+async function dbPatch(key, value, opts = {}) {
+  // Guard: block accidental wipes of adminOverrides to {} unless explicitly confirmed.
+  // Prevents stale tabs (running an older bundle) from clearing override locks on load.
+  if (key === "adminOverrides" && Object.keys(value || {}).length === 0 && !opts.confirmedClear) {
+    try {
+      await fetch(`${DB_URL}/pool/_breadcrumbs/adminOverrides_blocked_${Date.now()}.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ts: new Date().toISOString(), key, summary: "BLOCKED: empty write without confirmedClear", stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") }),
+      });
+    } catch {}
+    throw new Error("Blocked unconfirmed clear of adminOverrides");
+  }
   const r = await fetch(`${DB_URL}/pool/${key}.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -1736,6 +1751,9 @@ export default function WorldCupPool() {
   const [newRealName, setNewRealName]         = useState("");
   const [showRealNamePrompt, setShowRealNamePrompt] = useState(false);
   const [editingRealName, setEditingRealName] = useState("");
+
+  // Build marker — helps spot stale tabs in the console (compare against current BUILD_ID in source)
+  useEffect(() => { console.log("WC2026 BUILD_ID:", BUILD_ID); }, []);
 
   // Load from Firebase on mount
   useEffect(() => {
@@ -3545,7 +3563,7 @@ export default function WorldCupPool() {
                     <div style={{ background:"rgba(255,160,50,0.12)", border:"1px solid rgba(255,160,50,0.35)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12 }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
                         <span>🔒 {Object.keys(adminOverrides).length} cell{Object.keys(adminOverrides).length>1?"s":""} manually overridden</span>
-                        <button onClick={async () => { if (!window.confirm("Clear all override flags? This won't change the result values.")) return; setAdminOverrides({}); await dbPatch("adminOverrides", {}); }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
+                        <button onClick={async () => { if (!window.confirm("Clear all override flags? This won't change the result values.")) return; setAdminOverrides({}); await dbPatch("adminOverrides", {}, { confirmedClear: true }); }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
                       </div>
                       <div style={{ fontSize:10, color:"rgba(255,176,80,0.7)" }}>
                         Use 🔐 next to each result to permanently bake it in and remove the override flag.
