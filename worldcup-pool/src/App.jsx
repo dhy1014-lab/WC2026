@@ -3431,7 +3431,7 @@ export default function WorldCupPool() {
                 const updated = { ...(fresh.adminOverrides || {}) };
                 delete updated[key];
                 setAdminOverrides(updated);
-                await dbPatch("adminOverrides", updated);
+                await dbPatch("adminOverrides", updated, { confirmedClear: true });
               };
               const patchLiveResults = async (updated, overrideKey) => {
                 setLiveResults(updated);
