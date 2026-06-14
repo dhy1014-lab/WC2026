@@ -25,24 +25,45 @@ async function dbLoad() {
 async function dbSave(players, predictions, paid, settings, goldenBoot) {
   const body = { players, predictions, paid, settings };
   if (goldenBoot !== undefined) body.goldenBoot = goldenBoot;
-  console.log("[dbSave] PATCH pool.json keys:", Object.keys(body));
   const r = await fetch(`${DB_URL}/pool.json`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`Firebase save error ${r.status}`);
+  try {
+    const entry = { ts: new Date().toISOString(), key: "dbSave", summary: JSON.stringify(Object.keys(body)), stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
+    await fetch(`${DB_URL}/pool/_breadcrumbs/dbSave_${Date.now()}.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    });
+  } catch {}
 }
 
 // Patch a single top-level key in pool without overwriting others
 async function dbPatch(key, value) {
-  console.log("[dbPatch] PUT pool/"+key+".json value:", JSON.stringify(value)?.substring(0,100));
   const r = await fetch(`${DB_URL}/pool/${key}.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(value),
   });
   if (!r.ok) throw new Error(`Firebase patch error ${r.status}`);
+  // Breadcrumb logging for diagnosing data wipes — tracks writes to critical keys
+  if (["liveResults","livePhase2","liveP2Props","adminOverrides"].includes(key)) {
+    try {
+      const summary = key === "adminOverrides" ? Object.keys(value||{})
+        : key === "liveResults" ? { groups: Object.values(value?.groupRankings||{}).filter(Boolean).length, props: (value?.propResults||[]).filter(v=>v!==null&&v!==undefined).length }
+        : key === "livePhase2" ? Object.keys(value||{}).filter(k => value[k]!==null).length
+        : Object.values(value||{}).filter(v=>v!==null&&v!==undefined).length;
+      const entry = { ts: new Date().toISOString(), key, summary: JSON.stringify(summary), stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
+      await fetch(`${DB_URL}/pool/_breadcrumbs/${key}_${Date.now()}.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(entry),
+      });
+    } catch {}
+  }
 }
 
 // ── MESSAGE BOARD HELPERS ────────────────────────────────────────────────────
@@ -1682,6 +1703,7 @@ export default function WorldCupPool() {
   const [liveResults, setLiveResults]     = useState(null);
   const [livePhase2, setLivePhase2]       = useState(null);
   const [adminOverrides, setAdminOverrides] = useState({});
+  const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [adminTab, setAdminTab]           = useState("settings");
   const [auditPhase, setAuditPhase]       = useState("p1");
   const [expandedBreakdown, setExpandedBreakdown] = useState({});
@@ -1789,7 +1811,7 @@ export default function WorldCupPool() {
         if (data.liveResults) { setLiveResults(data.liveResults); setFetchStatus("done"); }
         else setFetchStatus("done");
         if (data.livePhase2) setLivePhase2(data.livePhase2);
-        if (data.adminOverrides) { console.log("[30s poll] adminOverrides:", JSON.stringify(data.adminOverrides)); setAdminOverrides(data.adminOverrides); }
+        if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
       }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
@@ -3178,7 +3200,7 @@ export default function WorldCupPool() {
 
             {/* Tab bar */}
             <div style={{ display:"flex", gap:4, marginBottom:16 }}>
-              {[["settings","⚙️ Settings"],["audit", needsOverrideCount > 0 ? `📋 Audit 🔴${needsOverrideCount}` : "📋 Results Audit"],["players","👥 Players"]].map(([key,label]) => (
+              {[["settings","⚙️ Settings"],["audit", needsOverrideCount > 0 ? `📋 Audit 🔴${needsOverrideCount}` : "📋 Results Audit"],["players","👥 Players"],["debug","🔍 Debug Log"]].map(([key,label]) => (
                 <button key={key} onClick={() => setAdminTab(key)} style={{
                   flex:1, padding:"8px 4px", borderRadius:6, border:"1px solid",
                   borderColor: adminTab===key ? "#f0d060" : "rgba(255,255,255,0.12)",
@@ -3287,7 +3309,40 @@ export default function WorldCupPool() {
               </div>
             )}
 
-            {/* ── RESULTS AUDIT TAB ── */}
+            {/* ── DEBUG LOG TAB ── */}
+            {adminTab==="debug" && (
+              <div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <div style={{ fontSize:11, color:"#9ab8a0" }}>
+                    Breadcrumbs of every write to liveResults / livePhase2 / liveP2Props / adminOverrides / dbSave. Helps trace unexpected resets.
+                  </div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={async () => {
+                      const r = await fetch(`${DB_URL}/pool/_breadcrumbs.json`);
+                      const data = await r.json();
+                      const entries = Object.values(data || {}).sort((a,b) => new Date(b.ts) - new Date(a.ts));
+                      setBreadcrumbs(entries);
+                    }} style={{ ...S.btn, fontSize:11, padding:"5px 10px" }}>🔄 Load</button>
+                    <button onClick={async () => {
+                      if (!window.confirm("Clear all debug breadcrumbs?")) return;
+                      await fetch(`${DB_URL}/pool/_breadcrumbs.json`, { method:"DELETE" });
+                      setBreadcrumbs([]);
+                    }} style={{ background:"rgba(255,160,50,0.15)", border:"1px solid rgba(255,160,50,0.3)", borderRadius:6, padding:"5px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear</button>
+                  </div>
+                </div>
+                {breadcrumbs.length === 0 && <div style={{ ...S.card, fontSize:11, color:"#9ab8a0", textAlign:"center" }}>No breadcrumbs loaded. Click Load.</div>}
+                {breadcrumbs.map((b, i) => (
+                  <div key={i} style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:6, padding:"8px 10px", marginBottom:5, fontSize:11 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                      <span style={{ color:"#f0d060", fontWeight:"bold" }}>{b.key}</span>
+                      <span style={{ color:"#9ab8a0" }}>{new Date(b.ts).toLocaleString()}</span>
+                    </div>
+                    <div style={{ color:"#c8b8a0", fontFamily:"monospace", fontSize:10, wordBreak:"break-all" }}>summary: {b.summary}</div>
+                    {b.stack && <div style={{ color:"#666", fontFamily:"monospace", fontSize:9, marginTop:2, wordBreak:"break-all" }}>{b.stack}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
             {adminTab==="audit" && (() => {
               // Phase sub-tabs
               const auditBtnStyle = (ph) => ({
@@ -3299,25 +3354,17 @@ export default function WorldCupPool() {
 
               // Per-cell override helpers
               const setOverride = async (key) => {
-                console.log("[setOverride] START key:", key);
                 const fresh = await dbLoad();
-                console.log("[setOverride] fresh adminOverrides:", JSON.stringify(fresh.adminOverrides));
                 const updated = { ...(fresh.adminOverrides || {}), [key]: true };
-                console.log("[setOverride] writing:", JSON.stringify(updated));
                 setAdminOverrides(updated);
                 await dbPatch("adminOverrides", updated);
-                console.log("[setOverride] DONE key:", key);
               };
               const clearOverride = async (key) => {
-                console.log("[clearOverride] START key:", key);
                 const fresh = await dbLoad();
-                console.log("[clearOverride] fresh adminOverrides:", JSON.stringify(fresh.adminOverrides));
                 const updated = { ...(fresh.adminOverrides || {}) };
                 delete updated[key];
-                console.log("[clearOverride] writing:", JSON.stringify(updated));
                 setAdminOverrides(updated);
                 await dbPatch("adminOverrides", updated);
-                console.log("[clearOverride] DONE key:", key);
               };
               const patchLiveResults = async (updated, overrideKey) => {
                 setLiveResults(updated);
@@ -3499,8 +3546,11 @@ export default function WorldCupPool() {
                                             {teams.map(t => <option key={t} value={t}>{t}</option>)}
                                           </select>
                                           <button onClick={async () => {
-                                            const newRanking = [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actual[i]||null));
-                                            const updated = { ...liveResults, groupRankings: { ...(liveResults?.groupRankings||{}), [g]: newRanking } };
+                                            const fresh = await dbLoad();
+                                            const freshLR = fresh.liveResults || {};
+                                            const actualFresh = freshLR.groupRankings?.[g] || [null,null,null,null];
+                                            const newRanking = [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actualFresh[i]||null));
+                                            const updated = { ...freshLR, groupRankings: { ...(freshLR.groupRankings||{}), [g]: newRanking } };
                                             setEditingGroup(null);
                                             await patchLiveResults(updated, "groupRankings_"+g);
                                           }} style={{ ...S.btn, fontSize:10, padding:"2px 8px" }}>✓</button>
@@ -3538,9 +3588,11 @@ export default function WorldCupPool() {
                                   const active = settled ? actual===val : val===null;
                                   return (
                                     <button key={label} onClick={async () => {
-                                      const newPropResults = [...(liveResults?.propResults || Array(34).fill(null))];
+                                      const fresh = await dbLoad();
+                                      const freshLR = fresh.liveResults || {};
+                                      const newPropResults = [...(freshLR.propResults || Array(34).fill(null))];
                                       newPropResults[i] = val;
-                                      const updated = { ...liveResults, propResults: newPropResults };
+                                      const updated = { ...freshLR, propResults: newPropResults };
                                       await patchLiveResults(updated, val===null ? null : "propResults_"+i);
                                       if (val===null) await clearOverride("propResults_"+i);
                                     }} style={{
@@ -3708,7 +3760,8 @@ export default function WorldCupPool() {
                                       const active = winner === team;
                                       return (
                                         <button key={ti} onClick={async () => {
-                                          const updated = { ...(livePhase2||{}), [match.id]: team };
+                                          const fresh = await dbLoad();
+                                          const updated = { ...(fresh.livePhase2||{}), [match.id]: team };
                                           await patchLivePhase2(updated, team===null ? null : "livePhase2_"+match.id);
                                           if (team===null) await clearOverride("livePhase2_"+match.id);
                                         }} style={{
@@ -3743,7 +3796,8 @@ export default function WorldCupPool() {
                                   const active = settled ? actual===val : val===null;
                                   return (
                                     <button key={label} onClick={async () => {
-                                      const updated = { ...(liveP2Props||{}), [prop.id]: val };
+                                      const fresh = await dbLoad();
+                                      const updated = { ...(fresh.liveP2Props||{}), [prop.id]: val };
                                       setLiveP2Props(updated);
                                       await dbPatch("liveP2Props", updated);
                                       if (val===null) { await clearOverride("liveP2Props_"+prop.id); }
