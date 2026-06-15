@@ -48,19 +48,7 @@ async function dbSave(players, predictions, paid, settings, goldenBoot) {
 }
 
 // Patch a single top-level key in pool without overwriting others
-async function dbPatch(key, value, opts = {}) {
-  // Guard: block accidental wipes of adminOverrides to {} unless explicitly confirmed.
-  // Prevents stale tabs (running an older bundle) from clearing override locks on load.
-  if (key === "adminOverrides" && Object.keys(value || {}).length === 0 && !opts.confirmedClear) {
-    try {
-      await fetch(`${DB_URL}/pool/_breadcrumbs/adminOverrides_blocked_${Date.now()}.json`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ts: new Date().toISOString(), key, summary: "BLOCKED: empty write without confirmedClear", stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") }),
-      });
-    } catch {}
-    throw new Error("Blocked unconfirmed clear of adminOverrides");
-  }
+async function dbPatch(key, value) {
   const r = await fetch(`${DB_URL}/pool/${key}.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -82,6 +70,40 @@ async function dbPatch(key, value, opts = {}) {
       });
     } catch {}
   }
+}
+
+// ── ADMIN OVERRIDE FLAGS — PER-KEY STORAGE ────────────────────────────────────
+// Each override flag lives at its own Firebase path (pool/adminOverrides/{key}),
+// written/deleted individually. There is no "whole adminOverrides object" write
+// path anymore, so no code — old, new, or buggy — can ever wipe other flags
+// while setting or clearing one.
+
+// Set a single override flag to true. Only touches pool/adminOverrides/{key}.
+async function setOverrideFlag(key) {
+  const r = await fetch(`${DB_URL}/pool/adminOverrides/${key}.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(true),
+  });
+  if (!r.ok) throw new Error(`Firebase patch error ${r.status}`);
+  try {
+    const entry = { ts: new Date().toISOString(), key: "adminOverrides", summary: `SET ${key}`, stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
+    await fetch(`${DB_URL}/pool/_breadcrumbs/adminOverrides_${Date.now()}.json`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry),
+    });
+  } catch {}
+}
+
+// Clear a single override flag. Only touches pool/adminOverrides/{key} (DELETE).
+async function clearOverrideFlag(key) {
+  const r = await fetch(`${DB_URL}/pool/adminOverrides/${key}.json`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`Firebase delete error ${r.status}`);
+  try {
+    const entry = { ts: new Date().toISOString(), key: "adminOverrides", summary: `CLEAR ${key}`, stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
+    await fetch(`${DB_URL}/pool/_breadcrumbs/adminOverrides_${Date.now()}.json`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry),
+    });
+  } catch {}
 }
 
 // ── MESSAGE BOARD HELPERS ────────────────────────────────────────────────────
@@ -2076,8 +2098,9 @@ export default function WorldCupPool() {
           try {
             const gb = await fetchGoldenBootOptions();
             if (gb?.options?.length >= 3) {
-              setGoldenBoot(gb);
-              await dbPatch("goldenBoot", gb);
+              const merged = { ...gb, answer: goldenBoot?.answer ?? gb.answer };
+              setGoldenBoot(merged);
+              await dbPatch("goldenBoot", merged);
             }
           } catch {}
         }
@@ -3567,17 +3590,12 @@ export default function WorldCupPool() {
 
               // Per-cell override helpers
               const setOverride = async (key) => {
-                const fresh = await dbLoad();
-                const updated = { ...(fresh.adminOverrides || {}), [key]: true };
-                setAdminOverrides(updated);
-                await dbPatch("adminOverrides", updated);
+                setAdminOverrides(prev => ({ ...prev, [key]: true }));
+                await setOverrideFlag(key);
               };
               const clearOverride = async (key) => {
-                const fresh = await dbLoad();
-                const updated = { ...(fresh.adminOverrides || {}) };
-                delete updated[key];
-                setAdminOverrides(updated);
-                await dbPatch("adminOverrides", updated, { confirmedClear: true });
+                setAdminOverrides(prev => { const u = { ...prev }; delete u[key]; return u; });
+                await clearOverrideFlag(key);
               };
               const patchLiveResults = async (updated, overrideKey) => {
                 setLiveResults(updated);
@@ -3709,7 +3727,7 @@ export default function WorldCupPool() {
                     <div style={{ background:"rgba(255,160,50,0.12)", border:"1px solid rgba(255,160,50,0.35)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12 }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
                         <span>🔒 {Object.keys(adminOverrides).length} cell{Object.keys(adminOverrides).length>1?"s":""} manually overridden</span>
-                        <button onClick={async () => { if (!window.confirm("Clear all override flags? This won't change the result values.")) return; setAdminOverrides({}); await dbPatch("adminOverrides", {}, { confirmedClear: true }); }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
+                        <button onClick={async () => { if (!window.confirm("Clear all override flags? This won't change the result values.")) return; const keys = Object.keys(adminOverrides); setAdminOverrides({}); for (const k of keys) { await clearOverrideFlag(k); } }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
                       </div>
                       <div style={{ fontSize:10, color:"rgba(255,176,80,0.7)" }}>
                         Use 🔐 next to each result to permanently bake it in and remove the override flag.
@@ -3792,16 +3810,15 @@ export default function WorldCupPool() {
                                     try {
                                       const fresh = await dbLoad();
                                       const freshLR = fresh.liveResults || {};
-                                      const freshOverrides = fresh.adminOverrides || {};
                                       const newRankings = { ...(freshLR.groupRankings || {}) };
-                                      const newOverrides = { ...freshOverrides };
                                       const applied = groupSheetImport.diff.filter(d=>!d.error);
-                                      applied.forEach(d => { newRankings[d.g] = d.to; newOverrides["groupRankings_"+d.g] = true; });
+                                      const newOverrideKeys = {};
+                                      applied.forEach(d => { newRankings[d.g] = d.to; newOverrideKeys["groupRankings_"+d.g] = true; });
                                       const updated = { ...freshLR, groupRankings: newRankings };
                                       setLiveResults(updated);
                                       await dbPatch("liveResults", updated);
-                                      setAdminOverrides(newOverrides);
-                                      await dbPatch("adminOverrides", newOverrides);
+                                      setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
+                                      for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
                                       setGroupSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s) and locked them.` });
                                     } catch (e) {
                                       setGroupSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -3917,15 +3934,14 @@ export default function WorldCupPool() {
                                   try {
                                     const fresh = await dbLoad();
                                     const freshLR = fresh.liveResults || {};
-                                    const freshOverrides = fresh.adminOverrides || {};
                                     const newPropResults = [...(freshLR.propResults || Array(34).fill(null))];
-                                    const newOverrides = { ...freshOverrides };
-                                    sheetImport.diff.forEach(d => { newPropResults[d.i] = d.to; newOverrides["propResults_"+d.i] = true; });
+                                    const newOverrideKeys = {};
+                                    sheetImport.diff.forEach(d => { newPropResults[d.i] = d.to; newOverrideKeys["propResults_"+d.i] = true; });
                                     const updated = { ...freshLR, propResults: newPropResults };
                                     setLiveResults(updated);
                                     await dbPatch("liveResults", updated);
-                                    setAdminOverrides(newOverrides);
-                                    await dbPatch("adminOverrides", newOverrides);
+                                    setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
+                                    for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
                                     setSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${sheetImport.diff.length} update(s) and locked them.` });
                                   } catch (e) {
                                     setSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -4130,7 +4146,16 @@ export default function WorldCupPool() {
                         <div style={{ display:"flex", gap:8, marginBottom:goldenBoot?.options?10:0 }}>
                           <button onClick={async () => {
                             setFetchStatus("loading");
-                            try { const gb = await fetchGoldenBootOptions(); if (gb) { setGoldenBoot(gb); await dbPatch("goldenBoot", gb); } setFetchStatus("done"); }
+                            try {
+                              const gb = await fetchGoldenBootOptions();
+                              if (gb) {
+                                // Preserve any already-set winner — re-fetching options must never clear it
+                                const merged = { ...gb, answer: goldenBoot?.answer ?? gb.answer };
+                                setGoldenBoot(merged);
+                                await dbPatch("goldenBoot", merged);
+                              }
+                              setFetchStatus("done");
+                            }
                             catch { setFetchStatus("error"); }
                           }} style={{ ...S.btn, fontSize:10, padding:"4px 10px" }}>🔄 Re-fetch Options</button>
                         </div>
@@ -4234,13 +4259,13 @@ export default function WorldCupPool() {
                                     try {
                                       const fresh = await dbLoad();
                                       const newLivePhase2 = { ...(fresh.livePhase2 || {}) };
-                                      const newOverrides = { ...(fresh.adminOverrides || {}) };
                                       const applied = bracketSheetImport.diff.filter(d=>!d.error);
-                                      applied.forEach(d => { newLivePhase2[d.matchId] = d.to; newOverrides["livePhase2_"+d.matchId] = true; });
+                                      const newOverrideKeys = {};
+                                      applied.forEach(d => { newLivePhase2[d.matchId] = d.to; newOverrideKeys["livePhase2_"+d.matchId] = true; });
                                       setLivePhase2(newLivePhase2);
                                       await dbPatch("livePhase2", newLivePhase2);
-                                      setAdminOverrides(newOverrides);
-                                      await dbPatch("adminOverrides", newOverrides);
+                                      setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
+                                      for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
                                       setBracketSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s) and locked them.` });
                                     } catch (e) {
                                       setBracketSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -4341,12 +4366,12 @@ export default function WorldCupPool() {
                                   try {
                                     const fresh = await dbLoad();
                                     const newLiveP2Props = { ...(fresh.liveP2Props || {}) };
-                                    const newOverrides = { ...(fresh.adminOverrides || {}) };
-                                    p2PropSheetImport.diff.forEach(d => { newLiveP2Props[d.id] = d.to; newOverrides["liveP2Props_"+d.id] = true; });
+                                    const newOverrideKeys = {};
+                                    p2PropSheetImport.diff.forEach(d => { newLiveP2Props[d.id] = d.to; newOverrideKeys["liveP2Props_"+d.id] = true; });
                                     setLiveP2Props(newLiveP2Props);
                                     await dbPatch("liveP2Props", newLiveP2Props);
-                                    setAdminOverrides(newOverrides);
-                                    await dbPatch("adminOverrides", newOverrides);
+                                    setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
+                                    for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
                                     setP2PropSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${p2PropSheetImport.diff.length} update(s) and locked them.` });
                                   } catch (e) {
                                     setP2PropSheetImport(s => ({ ...s, applying:false, error:e.message }));
