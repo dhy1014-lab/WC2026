@@ -1429,7 +1429,7 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
             );
           })}
 
-          {goldenBoot?.options && (
+          {goldenBoot?.options?.length === 3 && goldenBoot.options.every(o => o.name) && (
             <>
               <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🥇 GOLDEN BOOT</div>
               {(() => {
@@ -1886,6 +1886,9 @@ export default function WorldCupPool() {
   const [groupSheetImport, setGroupSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const [p2PropSheetImport, setP2PropSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const [gbSheetImport, setGbSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [gbOptionsSheetImport, setGbOptionsSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [editGbOption, setEditGbOption] = useState(null); // index 0-2
+  const [editGbOptionVal, setEditGbOptionVal] = useState({ name:"", pts:"" });
   const [bracketSheetImport, setBracketSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const adminSessionToken = useRef(null);
   const [adminTab, setAdminTab]           = useState("settings");
@@ -2034,144 +2037,6 @@ export default function WorldCupPool() {
     return () => clearInterval(iv);
   }, [isAdmin]);
 
-  const refreshScores = useCallback(async () => {
-    setFetchStatus("loading"); setFetchError("");
-    try {
-      // Read fresh state from Firebase before merging — never rely on potentially stale React state
-      const freshData = await dbLoad();
-      const freshOverrides = freshData.adminOverrides || {};
-      const freshLiveResults = freshData.liveResults || {};
-      const freshLivePhase2 = freshData.livePhase2 || {};
-      const freshLiveP2Props = freshData.liveP2Props || {};
-
-      // ── P1: group stage results + daily props ──
-      const r = await fetchLiveResults();
-      // Detect newly settled props → trigger confetti if current player won
-      if (prevPropResults && currentPlayer && !isAdmin) {
-        const pred = predictions[currentPlayer.id] || {};
-        (r.propResults || []).forEach((result, i) => {
-          if (result !== null && result !== undefined && (prevPropResults[i] === null || prevPropResults[i] === undefined)) {
-            if (pred.propPicks?.[i] === result) {
-              setConfettiProp(i);
-              setShowConfetti(true);
-            }
-          }
-        });
-      }
-      setPrevPropResults(r.propResults || []);
-      // Normalize any variant team names the API may have returned (e.g. "Czech Republic" → "Czechia")
-      const normalizedGroupRankings = {};
-      Object.entries(r.groupRankings || {}).forEach(([g, ranking]) => {
-        normalizedGroupRankings[g] = Array.isArray(ranking) ? ranking.map(normalizeTeamName) : ranking;
-      });
-      // Merge API result with existing DB state before persisting.
-      // Rule: an already-settled value in the DB is NEVER overwritten by a
-      // null/missing value from a fresh API fetch — with or without an
-      // override flag. Override flags still let an admin's explicit call
-      // take priority when the API also returns a (different) non-null value.
-      const mergedGroupRankings = { ...normalizedGroupRankings };
-      Object.keys(mergedGroupRankings).forEach(g => {
-        const existing = freshLiveResults?.groupRankings?.[g];
-        const fresh = mergedGroupRankings[g];
-        if (freshOverrides["groupRankings_"+g] && existing) {
-          mergedGroupRankings[g] = existing; // admin override always wins
-        } else if (!fresh && existing) {
-          mergedGroupRankings[g] = existing; // never null-out a settled result
-        }
-      });
-      const mergedPropResults = [...(r.propResults || [])];
-      mergedPropResults.forEach((_, i) => {
-        const existing = freshLiveResults?.propResults?.[i];
-        const fresh = mergedPropResults[i];
-        if (freshOverrides["propResults_"+i] && existing !== undefined && existing !== null) {
-          mergedPropResults[i] = existing; // admin override always wins
-        } else if ((fresh === undefined || fresh === null) && existing !== undefined && existing !== null) {
-          mergedPropResults[i] = existing; // never null-out a settled result
-        }
-      });
-      const mergedLiveResults = { ...r, groupRankings: mergedGroupRankings, propResults: mergedPropResults };
-      setLiveResults(mergedLiveResults); setLastFetched(new Date()); setFetchStatus("done");
-      try { await dbPatch("liveResults", mergedLiveResults); } catch {}
-
-      // ── P2: only after group stage opens ──
-      if (isPhase2Open()) {
-        // 1. Bracket slots — fetch once, persist to Firebase, never re-fetch
-        if (!bracketSlots) {
-          try {
-            const slots = await fetchBracketSlots();
-            if (slots && Object.values(slots).some(v => v !== null)) {
-              // Normalize any variant team names in slots
-              const normalizedSlots = {};
-              Object.entries(slots).forEach(([k, v]) => { normalizedSlots[k] = v ? normalizeTeamName(v) : v; });
-              setBracketSlots(normalizedSlots);
-              await dbPatch("bracketSlots", normalizedSlots);
-            }
-          } catch {}
-        }
-
-        // 2. Golden Boot options — fetch once after group stage, persist, never re-fetch
-        if (!goldenBoot?.options) {
-          try {
-            const gb = await fetchGoldenBootOptions();
-            if (gb?.options?.length >= 3) {
-              const merged = { ...gb, answer: goldenBoot?.answer ?? gb.answer };
-              setGoldenBoot(merged);
-              await dbPatch("goldenBoot", merged);
-            }
-          } catch {}
-        }
-
-        // 3. Knockout results + P2 props + golden boot winner
-        try {
-          const p2 = await fetchLivePhase2(bracketSlots);
-          if (p2) {
-            if (p2.knockoutWinners) {
-              // Normalize any variant team names the API may return
-              const normalizedWinners = {};
-              Object.entries(p2.knockoutWinners).forEach(([k, v]) => { normalizedWinners[k] = v ? normalizeTeamName(v) : v; });
-              const mergedPhase2 = { ...normalizedWinners };
-              Object.keys(mergedPhase2).forEach(matchId => {
-                const existing = freshLivePhase2?.[matchId];
-                const fresh = mergedPhase2[matchId];
-                if (freshOverrides["livePhase2_"+matchId] && existing !== undefined) {
-                  mergedPhase2[matchId] = existing; // admin override always wins
-                } else if ((fresh === undefined || fresh === null) && existing !== undefined && existing !== null) {
-                  mergedPhase2[matchId] = existing; // never null-out a settled result
-                }
-              });
-              // Carry forward finalFirstGoalMinute once known — never overwrite with null
-              if (p2.finalFirstGoalMinute != null) mergedPhase2.finalFirstGoalMinute = p2.finalFirstGoalMinute;
-              else if (livePhase2?.finalFirstGoalMinute != null) mergedPhase2.finalFirstGoalMinute = livePhase2.finalFirstGoalMinute;
-              setLivePhase2(mergedPhase2);
-              try { await dbPatch("livePhase2", mergedPhase2); } catch {}
-            }
-
-            if (p2.p2PropResults) {
-              const mergedP2Props = { ...(p2.p2PropResults || {}) };
-              Object.keys(mergedP2Props).forEach(propId => {
-                const existing = freshLiveP2Props?.[propId];
-                const fresh = mergedP2Props[propId];
-                if (freshOverrides["liveP2Props_"+propId] && existing !== undefined) {
-                  mergedP2Props[propId] = existing; // admin override always wins
-                } else if ((fresh === undefined || fresh === null) && existing !== undefined && existing !== null) {
-                  mergedP2Props[propId] = existing; // never null-out a settled result
-                }
-              });
-              setLiveP2Props(mergedP2Props);
-              await dbPatch("liveP2Props", mergedP2Props);
-            }
-
-            // Update golden boot winner once known
-            if (p2.goldenBootWinner && goldenBoot && !goldenBoot.answer) {
-              const updatedGb = { ...goldenBoot, answer: p2.goldenBootWinner };
-              setGoldenBoot(updatedGb);
-              await dbPatch("goldenBoot", updatedGb);
-            }
-          }
-        } catch {}
-      }
-    } catch (e) { setFetchError(e.message); setFetchStatus("error"); }
-  }, [prevPropResults, currentPlayer, predictions, isAdmin, bracketSlots, goldenBoot, adminOverrides, liveResults, livePhase2, liveP2Props]);
 
   async function register() {
     const name = newName.trim();
@@ -3374,7 +3239,7 @@ export default function WorldCupPool() {
                     <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, lineHeight:1.5 }}>
                       Top 3 group-stage scorers are shown after the group stage ends. Points weighted by likelihood — the favorite pays least, "Other" pays most (max 20pts).
                     </div>
-                    {!goldenBoot?.options ? (
+                    {!(goldenBoot?.options?.length === 3 && goldenBoot.options.every(o => o.name)) ? (
                       <div style={{ fontSize:12, color:"#aab0ff", padding:"12px 0", textAlign:"center" }}>
                         🔜 Options revealed after group stage ends (Jun 27)
                       </div>
@@ -4071,26 +3936,38 @@ export default function WorldCupPool() {
                       {/* Bracket Slots */}
                       <div style={S.card}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                          <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1 }}>🏟️ BRACKET SLOTS {bracketSlots ? <span style={{ color:"#8fffb0" }}>✓</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}</div>
-                          <button onClick={async () => {
-                            setFetchStatus("loading");
-                            try { const slots = await fetchBracketSlots(); if (slots) { setBracketSlots(slots); await dbPatch("bracketSlots", slots); } setFetchStatus("done"); }
-                            catch { setFetchStatus("error"); }
-                          }} style={{ ...S.btn, fontSize:10, padding:"4px 10px" }}>🔄 Re-fetch</button>
+                          <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1 }}>🏟️ BRACKET SLOTS (R32)</div>
+                          <div style={{ fontSize:9, color:"#666" }}>1X/2X auto-fill from group results · 3X entered manually</div>
                         </div>
-                        {bracketSlots && (
-                          <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                            {Object.entries(bracketSlots).map(([slot, team]) => {
+                        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                          {KNOCKOUT_ROUNDS.r32.map(match => {
+                            const renderSlot = (slot) => {
+                              const is3x = slot.startsWith("3");
+                              if (!is3x) {
+                                // 1X/2X — read-only, resolved from settled group standings
+                                const pos = slot[0] === "1" ? 0 : 1;
+                                const g = slot[1];
+                                const team = liveResults?.groupRankings?.[g]?.[pos] || null;
+                                return (
+                                  <div key={slot} style={{ background:"rgba(255,255,255,0.03)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:4, flex:1 }}>
+                                    <span style={{ color:"#f0d060", fontSize:10 }}>{slot}:</span>
+                                    <span style={{ color: team?"#f0e6c8":"#555" }}>{team || "TBD"}</span>
+                                    <span style={{ marginLeft:"auto", fontSize:9, color:"#555" }}>🔒</span>
+                                  </div>
+                                );
+                              }
+                              // 3X — editable
+                              const team = bracketSlots?.[slot] || null;
                               const isEditing = editBracketSlot === slot;
                               return (
-                                <div key={slot} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:4 }}>
+                                <div key={slot} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:4, flex:1 }}>
                                   <span style={{ color:"#f0d060", fontSize:10 }}>{slot}:</span>
                                   {isEditing ? (
                                     <>
                                       <input value={editBracketSlotVal} onChange={e => setEditBracketSlotVal(e.target.value)}
                                         style={{ ...S.input, width:100, padding:"2px 4px", fontSize:11 }} />
                                       <button onClick={async () => {
-                                        const updated = { ...bracketSlots, [slot]: editBracketSlotVal };
+                                        const updated = { ...(bracketSlots||{}), [slot]: editBracketSlotVal };
                                         setBracketSlots(updated); await dbPatch("bracketSlots", updated);
                                         setEditBracketSlot(null);
                                       }} style={{ ...S.btn, fontSize:10, padding:"2px 6px" }}>✓</button>
@@ -4104,24 +3981,31 @@ export default function WorldCupPool() {
                                   )}
                                 </div>
                               );
-                            })}
-                          </div>
-                        )}
-                        {!bracketSlots && <div style={{ fontSize:11, color:"#9ab8a0" }}>Not yet fetched. Click Re-fetch after group stage ends.</div>}
+                            };
+                            return (
+                              <div key={match.id} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                                <span style={{ fontSize:10, color:"#9ab8a0", minWidth:60 }}>{match.label}</span>
+                                {renderSlot(match.slotA)}
+                                <span style={{ fontSize:10, color:"#666" }}>vs</span>
+                                {renderSlot(match.slotB)}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
 
                       {/* Golden Boot */}
                       <div style={S.card}>
                         <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
-                          <span>🥾 GOLDEN BOOT {goldenBoot?.options ? <span style={{ color:"#8fffb0" }}>✓ options set</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}{goldenBoot?.answer && <span style={{ color:"#8fffb0" }}> · Winner: <strong>{goldenBoot.answer}</strong></span>}</span>
+                          <span>🥾 GOLDEN BOOT {goldenBoot?.options?.length === 3 ? <span style={{ color:"#8fffb0" }}>✓ options set</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}{goldenBoot?.answer && <span style={{ color:"#8fffb0" }}> · Winner: <strong>{goldenBoot.answer}</strong></span>}</span>
                           <button disabled={gbSheetImport.loading} onClick={async () => {
                             setGbSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
                             try {
                               const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
                               const freshGb = fresh.goldenBoot || null;
-                              if (!freshGb?.options) {
-                                setGbSheetImport({ loading:false, error:"Golden Boot options haven't been fetched yet — use 'Re-fetch Options' first.", diff:null, applying:false, done:"" });
+                              if (!freshGb?.options?.length) {
+                                setGbSheetImport({ loading:false, error:"Golden Boot options haven't been set yet — enter them manually or import below first.", diff:null, applying:false, done:"" });
                                 return;
                               }
                               const validNames = new Set([...freshGb.options.map(o=>o.name), "Other"]);
@@ -4144,7 +4028,7 @@ export default function WorldCupPool() {
                             } catch (e) {
                               setGbSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
                             }
-                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{gbSheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{gbSheetImport.loading ? "Loading…" : "📥 Preview Winner from Sheet"}</button>
                         </div>
                         {gbSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {gbSheetImport.error}</div>}
                         {gbSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{gbSheetImport.done}</div>}
@@ -4171,23 +4055,97 @@ export default function WorldCupPool() {
                             )}
                           </div>
                         )}
-                        <div style={{ display:"flex", gap:8, marginBottom:goldenBoot?.options?10:0 }}>
-                          <button onClick={async () => {
-                            setFetchStatus("loading");
+
+                        {/* Manual options entry — 3 slots, name + pts */}
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                          <div style={{ fontSize:10, color:"#9ab8a0" }}>Options (3 — "Other" at 20pts always appended for players)</div>
+                          <button disabled={gbOptionsSheetImport.loading} onClick={async () => {
+                            setGbOptionsSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
                             try {
-                              const gb = await fetchGoldenBootOptions();
-                              if (gb) {
-                                // Preserve any already-set winner — re-fetching options must never clear it
-                                const merged = { ...gb, answer: goldenBoot?.answer ?? gb.answer };
-                                setGoldenBoot(merged);
-                                await dbPatch("goldenBoot", merged);
+                              const sheet = await fetchScoresheet();
+                              const rows = sheet.goldenboot.filter(row => {
+                                const id = (row.id||"").trim();
+                                return id && id !== "Other" && !id.startsWith("(TBD");
+                              });
+                              if (rows.length === 0) {
+                                setGbOptionsSheetImport({ loading:false, error:"No named options found in sheet's goldenboot rows.", diff:null, applying:false, done:"" });
+                                return;
                               }
-                              setFetchStatus("done");
+                              const fresh = await dbLoad();
+                              const current = fresh.goldenBoot?.options || [];
+                              const proposed = rows.slice(0,3).map(row => ({
+                                name: (row.id||"").trim(),
+                                pts: parseInt(row.field1, 10) || 0,
+                              }));
+                              const changed = JSON.stringify(current) !== JSON.stringify(proposed);
+                              setGbOptionsSheetImport({ loading:false, error:"", diff: changed ? proposed : [], applying:false, done:"" });
+                            } catch (e) {
+                              setGbOptionsSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
                             }
-                            catch { setFetchStatus("error"); }
-                          }} style={{ ...S.btn, fontSize:10, padding:"4px 10px" }}>🔄 Re-fetch Options</button>
+                          }} style={{ ...S.btn, fontSize:10, padding:"3px 8px" }}>{gbOptionsSheetImport.loading ? "Loading…" : "📥 Import Options from Sheet"}</button>
                         </div>
-                        {goldenBoot?.options && (
+                        {gbOptionsSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {gbOptionsSheetImport.error}</div>}
+                        {gbOptionsSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{gbOptionsSheetImport.done}</div>}
+                        {gbOptionsSheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {gbOptionsSheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current options.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#c8b8a0", marginBottom:6 }}>
+                                  {gbOptionsSheetImport.diff.map(o => `${o.name} (${o.pts}pts)`).join(", ")}
+                                </div>
+                                <button disabled={gbOptionsSheetImport.applying} onClick={async () => {
+                                  setGbOptionsSheetImport(s => ({ ...s, applying:true }));
+                                  try {
+                                    const fresh = await dbLoad();
+                                    const updated = { ...(fresh.goldenBoot||{}), options: gbOptionsSheetImport.diff, answer: fresh.goldenBoot?.answer ?? null };
+                                    setGoldenBoot(updated);
+                                    await dbPatch("goldenBoot", updated);
+                                    setGbOptionsSheetImport({ loading:false, error:"", diff:null, applying:false, done:"Options updated from sheet." });
+                                  } catch (e) {
+                                    setGbOptionsSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                  }
+                                }} style={{ ...S.btn, fontSize:11, padding:"4px 12px" }}>{gbOptionsSheetImport.applying ? "Applying…" : "Apply"}</button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:10 }}>
+                          {[0,1,2].map(idx => {
+                            const opt = goldenBoot?.options?.[idx] || { name:"", pts:"" };
+                            const isEditing = editGbOption === idx;
+                            return (
+                              <div key={idx} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:6 }}>
+                                <span style={{ color:"#9ab8a0", fontSize:10, minWidth:14 }}>{idx+1}.</span>
+                                {isEditing ? (
+                                  <>
+                                    <input value={editGbOptionVal.name} onChange={e => setEditGbOptionVal(v => ({ ...v, name:e.target.value }))}
+                                      placeholder="Player name" style={{ ...S.input, width:160, padding:"2px 4px", fontSize:11 }} />
+                                    <input value={editGbOptionVal.pts} onChange={e => setEditGbOptionVal(v => ({ ...v, pts:e.target.value }))}
+                                      placeholder="pts" type="number" style={{ ...S.input, width:60, padding:"2px 4px", fontSize:11 }} />
+                                    <button onClick={async () => {
+                                      const newOptions = [ { name:"", pts:0 }, { name:"", pts:0 }, { name:"", pts:0 } ];
+                                      (goldenBoot?.options || []).forEach((o,i) => { if (i<3) newOptions[i] = o; });
+                                      newOptions[idx] = { name: editGbOptionVal.name.trim(), pts: parseInt(editGbOptionVal.pts,10) || 0 };
+                                      const updated = { ...(goldenBoot||{}), options: newOptions, answer: goldenBoot?.answer ?? null };
+                                      setGoldenBoot(updated); await dbPatch("goldenBoot", updated);
+                                      setEditGbOption(null);
+                                    }} style={{ ...S.btn, fontSize:10, padding:"2px 6px" }}>✓</button>
+                                    <button onClick={() => setEditGbOption(null)} style={{ background:"transparent", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✕</button>
+                                  </>
+                                ) : (
+                                  <span onClick={() => { setEditGbOption(idx); setEditGbOptionVal({ name: opt.name||"", pts: opt.pts!=null?String(opt.pts):"" }); }}
+                                    style={{ color: opt.name?"#f0e6c8":"#555", cursor:"pointer" }}>
+                                    {opt.name ? `${opt.name} — ${opt.pts}pts` : "— not set —"} <span style={{ fontSize:9, color:"#555" }}>✏️</span>
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {goldenBoot?.options?.length === 3 && (
                           <div>
                             <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
                               {[...goldenBoot.options, { name:"Other", pts:20 }].map(o => (
