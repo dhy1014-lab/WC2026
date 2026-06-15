@@ -14,6 +14,25 @@ async function dbLoad() {
   if (!r.ok) throw new Error(`Firebase error ${r.status}`);
   const data = await r.json();
   if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] }, goldenBoot: null, bracketSlots: null, liveP2Props: null, liveResults: null, livePhase2: null };
+  // Read settled results from pool/settled/* — the canonical source of truth.
+  // Fall back to pool/liveResults for migration of any previously-saved data.
+  const settled = data.settled || {};
+  const legacyLR = data.liveResults || null;
+  const propResults = (() => {
+    if (settled.propResults) {
+      // Firebase stores sparse arrays as objects keyed by index string — normalize to array
+      const arr = Array(34).fill(null);
+      Object.entries(settled.propResults).forEach(([k, v]) => { arr[parseInt(k, 10)] = v; });
+      return arr;
+    }
+    return legacyLR?.propResults || null;
+  })();
+  const groupRankings = settled.groupRankings || legacyLR?.groupRankings || null;
+  const liveResults = (propResults || groupRankings)
+    ? { propResults: propResults || Array(34).fill(null), groupRankings: groupRankings || {}, totalGoals: settled.totalGoals ?? legacyLR?.totalGoals ?? null }
+    : null;
+  const livePhase2 = settled.livePhase2 || data.livePhase2 || null;
+  const liveP2Props = settled.liveP2Props || data.liveP2Props || null;
   return {
     players: data.players || [],
     predictions: data.predictions || {},
@@ -21,10 +40,9 @@ async function dbLoad() {
     settings: data.settings || { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] },
     goldenBoot: data.goldenBoot || null,
     bracketSlots: data.bracketSlots || null,
-    liveP2Props: data.liveP2Props || null,
-    liveResults: data.liveResults || null,
-    livePhase2: data.livePhase2 || null,
-    adminOverrides: data.adminOverrides || {},
+    liveP2Props,
+    liveResults,
+    livePhase2,
   };
 }
 
@@ -47,7 +65,7 @@ async function dbSave(players, predictions, paid, settings, goldenBoot) {
   } catch {}
 }
 
-// Patch a single top-level key in pool without overwriting others
+// Patch a single top-level key in pool without overwriting others (used for bracketSlots, goldenBoot, etc.)
 async function dbPatch(key, value) {
   const r = await fetch(`${DB_URL}/pool/${key}.json`, {
     method: "PUT",
@@ -55,56 +73,28 @@ async function dbPatch(key, value) {
     body: JSON.stringify(value),
   });
   if (!r.ok) throw new Error(`Firebase patch error ${r.status}`);
-  // Breadcrumb logging for diagnosing data wipes — tracks writes to critical keys
-  if (["liveResults","livePhase2","liveP2Props","adminOverrides"].includes(key)) {
-    try {
-      const summary = key === "adminOverrides" ? Object.keys(value||{})
-        : key === "liveResults" ? { groups: Object.values(value?.groupRankings||{}).filter(Boolean).length, props: (value?.propResults||[]).filter(v=>v!==null&&v!==undefined).length }
-        : key === "livePhase2" ? Object.keys(value||{}).filter(k => value[k]!==null).length
-        : Object.values(value||{}).filter(v=>v!==null&&v!==undefined).length;
-      const entry = { ts: new Date().toISOString(), key, summary: JSON.stringify(summary), stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
-      await fetch(`${DB_URL}/pool/_breadcrumbs/${key}_${Date.now()}.json`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(entry),
-      });
-    } catch {}
-  }
 }
 
-// ── ADMIN OVERRIDE FLAGS — PER-KEY STORAGE ────────────────────────────────────
-// Each override flag lives at its own Firebase path (pool/adminOverrides/{key}),
-// written/deleted individually. There is no "whole adminOverrides object" write
-// path anymore, so no code — old, new, or buggy — can ever wipe other flags
-// while setting or clearing one.
-
-// Set a single override flag to true. Only touches pool/adminOverrides/{key}.
-async function setOverrideFlag(key) {
-  const r = await fetch(`${DB_URL}/pool/adminOverrides/${key}.json`, {
+// ── SETTLED RESULTS — PERMANENT PER-KEY WRITES ───────────────────────────────
+// Each result lives at its own Firebase path under pool/settled/.
+// PUT writes exactly one value and never touches siblings.
+// There is no bulk-write path, no clear path, no override system.
+// Once written, a value can only be corrected by writing a new value to the same path.
+async function settlePut(path, value) {
+  const r = await fetch(`${DB_URL}/pool/settled/${path}.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(true),
+    body: JSON.stringify(value),
   });
-  if (!r.ok) throw new Error(`Firebase patch error ${r.status}`);
+  if (!r.ok) throw new Error(`Firebase settle error ${r.status}`);
   try {
-    const entry = { ts: new Date().toISOString(), key: "adminOverrides", summary: `SET ${key}`, stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
-    await fetch(`${DB_URL}/pool/_breadcrumbs/adminOverrides_${Date.now()}.json`, {
+    const entry = { ts: new Date().toISOString(), path, value: JSON.stringify(value), stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
+    await fetch(`${DB_URL}/pool/_breadcrumbs/settled_${Date.now()}.json`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry),
     });
   } catch {}
 }
 
-// Clear a single override flag. Only touches pool/adminOverrides/{key} (DELETE).
-async function clearOverrideFlag(key) {
-  const r = await fetch(`${DB_URL}/pool/adminOverrides/${key}.json`, { method: "DELETE" });
-  if (!r.ok) throw new Error(`Firebase delete error ${r.status}`);
-  try {
-    const entry = { ts: new Date().toISOString(), key: "adminOverrides", summary: `CLEAR ${key}`, stack: (new Error().stack||"").split("\n").slice(2,4).join(" | ") };
-    await fetch(`${DB_URL}/pool/_breadcrumbs/adminOverrides_${Date.now()}.json`, {
-      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry),
-    });
-  } catch {}
-}
 
 // ── MESSAGE BOARD HELPERS ────────────────────────────────────────────────────
 async function loadMessages() {
@@ -1534,7 +1524,6 @@ function BracketImportTree({ diff }) {
               <div key={d.matchId} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:6, padding:"6px 10px", fontSize:11, color:"#c8b8a0" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
                   <span style={{ color:"#9ab8a0" }}>{d.label}</span>
-                  {d.alreadyLocked && <span style={{ color:"#ffb060", fontSize:9 }}>🔒 locked — will be overwritten</span>}
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                   <span style={{ color: d.to===d.teamA ? "#8fffb0" : "#c8b8a0" }}>{d.teamA ? <>{tf(d.teamA)} {d.teamA}</> : "—"}</span>
@@ -1880,7 +1869,6 @@ export default function WorldCupPool() {
 
   const [liveResults, setLiveResults]     = useState(null);
   const [livePhase2, setLivePhase2]       = useState(null);
-  const [adminOverrides, setAdminOverrides] = useState({});
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [sheetImport, setSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const [groupSheetImport, setGroupSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
@@ -1938,7 +1926,6 @@ export default function WorldCupPool() {
         if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
         if (data.liveResults) setLiveResults(data.liveResults);
         if (data.livePhase2) setLivePhase2(data.livePhase2);
-        if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
         const def = { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] };
         const s = data.settings || def;
         setSettings(s);
@@ -2009,7 +1996,6 @@ export default function WorldCupPool() {
         if (data.liveResults) { setLiveResults(data.liveResults); setFetchStatus("done"); }
         else setFetchStatus("done");
         if (data.livePhase2) setLivePhase2(data.livePhase2);
-        if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
       }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
@@ -2602,8 +2588,7 @@ export default function WorldCupPool() {
                   if (data.liveResults) setLiveResults(data.liveResults);
                   if (data.livePhase2) setLivePhase2(data.livePhase2);
                   if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
-                  if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
-                  setFetchStatus("done");
+                            setFetchStatus("done");
                   setLbLoading(false);
                 }).catch(() => { setLbLoading(false); });
               }
@@ -3443,7 +3428,7 @@ export default function WorldCupPool() {
               <div>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
                   <div style={{ fontSize:11, color:"#9ab8a0" }}>
-                    Breadcrumbs of every write to liveResults / livePhase2 / liveP2Props / adminOverrides / dbSave. Helps trace unexpected resets.
+                    Breadcrumbs of every write to pool/settled/* and dbSave. Helps trace unexpected resets.
                   </div>
                   <div style={{ display:"flex", gap:6 }}>
                     <button onClick={async () => {
@@ -3481,24 +3466,11 @@ export default function WorldCupPool() {
                 color: auditPhase===ph ? "#f0d060" : "#9ab8a0", fontWeight: auditPhase===ph ? "bold" : "normal",
               });
 
-              // Per-cell override helpers
-              const setOverride = async (key) => {
-                setAdminOverrides(prev => ({ ...prev, [key]: true }));
-                await setOverrideFlag(key);
-              };
-              const clearOverride = async (key) => {
-                setAdminOverrides(prev => { const u = { ...prev }; delete u[key]; return u; });
-                await clearOverrideFlag(key);
-              };
-              const patchLiveResults = async (updated, overrideKey) => {
-                setLiveResults(updated);
-                await dbPatch("liveResults", updated);
-                if (overrideKey) await setOverride(overrideKey);
-              };
-              const patchLivePhase2 = async (updated, overrideKey) => {
-                setLivePhase2(updated);
-                await dbPatch("livePhase2", updated);
-                if (overrideKey) await setOverride(overrideKey);
+              // Settled result helpers — write individual values to pool/settled/*
+              // Never bulk-writes, never clears. Corrections overwrite the same path.
+              const settleResult = async (path, value, stateUpdater) => {
+                stateUpdater();
+                await settlePut(path, value);
               };
 
               // Compute items that should be settled by now but are still null (API failed to resolve)
@@ -3616,17 +3588,7 @@ export default function WorldCupPool() {
                   )}
 
                   {/* Override summary banner */}
-                  {Object.keys(adminOverrides).length > 0 && (
-                    <div style={{ background:"rgba(255,160,50,0.12)", border:"1px solid rgba(255,160,50,0.35)", borderRadius:6, padding:"8px 12px", fontSize:11, color:"#ffb060", marginBottom:12 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                        <span>🔒 {Object.keys(adminOverrides).length} cell{Object.keys(adminOverrides).length>1?"s":""} manually overridden</span>
-                        <button onClick={async () => { if (!window.confirm("Clear all override flags? This won't change the result values.")) return; const keys = Object.keys(adminOverrides); setAdminOverrides({}); for (const k of keys) { await clearOverrideFlag(k); } }} style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:4, padding:"3px 10px", color:"#ffb060", cursor:"pointer", fontSize:11 }}>Clear All Flags</button>
-                      </div>
-                      <div style={{ fontSize:10, color:"rgba(255,176,80,0.7)" }}>
-                        Use 🔐 next to each result to permanently bake it in and remove the override flag.
-                      </div>
-                    </div>
-                  )}
+
 
                   {/* Phase tabs */}
                   <div style={{ display:"flex", gap:8, marginBottom:16 }}>
@@ -3651,7 +3613,6 @@ export default function WorldCupPool() {
                               const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
                               const freshLR = fresh.liveResults || {};
-                              const freshOverrides = fresh.adminOverrides || {};
                               const currentRankings = freshLR.groupRankings || {};
                               const diff = [];
                               sheet.group.forEach(row => {
@@ -3667,10 +3628,9 @@ export default function WorldCupPool() {
                                   return;
                                 }
                                 const currentRanking = currentRankings[g] || [null,null,null,null];
-                                const alreadyLocked = !!freshOverrides["groupRankings_"+g];
                                 const changed = JSON.stringify(currentRanking) !== JSON.stringify(sheetRanking.map(t => t || null));
                                 if (changed) {
-                                  diff.push({ g, from: currentRanking, to: sheetRanking.map(t => t || null), alreadyLocked });
+                                  diff.push({ g, from: currentRanking, to: sheetRanking.map(t => t || null) });
                                 }
                               });
                               setGroupSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
@@ -3694,25 +3654,17 @@ export default function WorldCupPool() {
                                   <div key={idx} style={{ fontSize:11, color:"#c8b8a0", marginBottom:4, display:"flex", gap:6, flexWrap:"wrap" }}>
                                     <span style={{ color:"#9ab8a0", minWidth:50 }}>Group {d.g}</span>
                                     <span>{d.from.map(t=>t||"—").join(", ")} → <b style={{ color:"#8fffb0" }}>{d.to.map(t=>t||"—").join(", ")}</b></span>
-                                    {d.alreadyLocked && <span style={{ color:"#ffb060" }}>🔒 currently locked — will be overwritten</span>}
                                   </div>
                                 ))}
                                 {groupSheetImport.diff.some(d=>!d.error) && (
                                   <button disabled={groupSheetImport.applying} onClick={async () => {
                                     setGroupSheetImport(s => ({ ...s, applying:true }));
                                     try {
-                                      const fresh = await dbLoad();
-                                      const freshLR = fresh.liveResults || {};
-                                      const newRankings = { ...(freshLR.groupRankings || {}) };
                                       const applied = groupSheetImport.diff.filter(d=>!d.error);
-                                      const newOverrideKeys = {};
-                                      applied.forEach(d => { newRankings[d.g] = d.to; newOverrideKeys["groupRankings_"+d.g] = true; });
-                                      const updated = { ...freshLR, groupRankings: newRankings };
-                                      setLiveResults(updated);
-                                      await dbPatch("liveResults", updated);
-                                      setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
-                                      for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
-                                      setGroupSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s) and locked them.` });
+                                      for (const d of applied) { await settlePut("groupRankings/"+d.g, d.to); }
+                                      const fresh = await dbLoad();
+                                      setLiveResults(fresh.liveResults);
+                                      setGroupSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s).` });
                                     } catch (e) {
                                       setGroupSheetImport(s => ({ ...s, applying:false, error:e.message }));
                                     }
@@ -3730,9 +3682,7 @@ export default function WorldCupPool() {
                               <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"8px 10px" }}>
                                 <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
                                   GROUP {g}
-                                  {adminOverrides["groupRankings_"+g] && (
-                                    <button onClick={() => clearOverride("groupRankings_"+g)} title="Clear override" style={{ background:"rgba(255,160,50,0.2)", border:"1px solid rgba(255,160,50,0.4)", borderRadius:3, padding:"1px 5px", color:"#ffb060", cursor:"pointer", fontSize:9 }}>🔒 clear</button>
-                                  )}
+
                                 </div>
                                 {[0,1,2,3].map(idx => {
                                   const isEditing = editingGroup?.g === g && editingGroup?.idx === idx;
@@ -3752,9 +3702,9 @@ export default function WorldCupPool() {
                                             const freshLR = fresh.liveResults || {};
                                             const actualFresh = freshLR.groupRankings?.[g] || [null,null,null,null];
                                             const newRanking = [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actualFresh[i]||null));
-                                            const updated = { ...freshLR, groupRankings: { ...(freshLR.groupRankings||{}), [g]: newRanking } };
                                             setEditingGroup(null);
-                                            await patchLiveResults(updated, "groupRankings_"+g);
+                                            await settlePut("groupRankings/"+g, newRanking);
+                                            setLiveResults({ ...freshLR, groupRankings: { ...(freshLR.groupRankings||{}), [g]: newRanking } });
                                           }} style={{ ...S.btn, fontSize:10, padding:"2px 8px" }}>✓</button>
                                           <button onClick={() => setEditingGroup(null)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:4, padding:"2px 6px", color:"#9ab8a0", cursor:"pointer", fontSize:10 }}>✕</button>
                                         </div>
@@ -3784,7 +3734,6 @@ export default function WorldCupPool() {
                               const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
                               const freshLR = fresh.liveResults || {};
-                              const freshOverrides = fresh.adminOverrides || {};
                               const currentProps = freshLR.propResults || Array(34).fill(null);
                               const diff = [];
                               sheet.prop1.forEach(row => {
@@ -3793,10 +3742,9 @@ export default function WorldCupPool() {
                                 const sheetVal = parseYesNo(row.result);
                                 if (sheetVal === null) return; // blank in sheet — nothing to import
                                 const currentVal = currentProps[i];
-                                const alreadyLocked = !!freshOverrides["propResults_"+i];
                                 const changed = currentVal !== sheetVal;
                                 if (changed) {
-                                  diff.push({ i, date: DAILY_PROPS[i].date, q: DAILY_PROPS[i].q, from: currentVal, to: sheetVal, alreadyLocked });
+                                  diff.push({ i, date: DAILY_PROPS[i].date, q: DAILY_PROPS[i].q, from: currentVal, to: sheetVal });
                                 }
                               });
                               setSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
@@ -3819,23 +3767,15 @@ export default function WorldCupPool() {
                                     <span style={{ color:"#9ab8a0", minWidth:36 }}>{d.date}</span>
                                     <span style={{ flex:1, minWidth:120 }}>{d.q.substring(0,50)}…</span>
                                     <span>{d.from===true?"YES":d.from===false?"NO":"—"} → <b style={{ color:d.to?"#8fffb0":"#ff9090" }}>{d.to?"YES":"NO"}</b></span>
-                                    {d.alreadyLocked && <span style={{ color:"#ffb060" }}>🔒 currently locked — will be overwritten</span>}
                                   </div>
                                 ))}
                                 <button disabled={sheetImport.applying} onClick={async () => {
                                   setSheetImport(s => ({ ...s, applying:true }));
                                   try {
+                                    for (const d of sheetImport.diff) { await settlePut("propResults/"+d.i, d.to); }
                                     const fresh = await dbLoad();
-                                    const freshLR = fresh.liveResults || {};
-                                    const newPropResults = [...(freshLR.propResults || Array(34).fill(null))];
-                                    const newOverrideKeys = {};
-                                    sheetImport.diff.forEach(d => { newPropResults[d.i] = d.to; newOverrideKeys["propResults_"+d.i] = true; });
-                                    const updated = { ...freshLR, propResults: newPropResults };
-                                    setLiveResults(updated);
-                                    await dbPatch("liveResults", updated);
-                                    setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
-                                    for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
-                                    setSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${sheetImport.diff.length} update(s) and locked them.` });
+                                    setLiveResults(fresh.liveResults);
+                                    setSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${sheetImport.diff.length} update(s).` });
                                   } catch (e) {
                                     setSheetImport(s => ({ ...s, applying:false, error:e.message }));
                                   }
@@ -3850,33 +3790,27 @@ export default function WorldCupPool() {
                           return (
                             <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
                               <span style={{ fontSize:10, color:"#9ab8a0", minWidth:36 }}>{prop.date}</span>
-                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}… {adminOverrides["propResults_"+i] && <span style={{ color:"#ffb060", fontSize:9 }}>🔒</span>}</span>
+                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}…</span>
                               <div style={{ display:"flex", gap:4 }}>
-                                {[true, false, null].map(val => {
-                                  const label = val===true?"YES":val===false?"NO":"—";
-                                  const active = settled ? actual===val : val===null;
+                                {[true, false].map(val => {
+                                  const label = val===true?"YES":"NO";
+                                  const active = settled && actual===val;
                                   return (
                                     <button key={label} onClick={async () => {
                                       const fresh = await dbLoad();
                                       const freshLR = fresh.liveResults || {};
                                       const newPropResults = [...(freshLR.propResults || Array(34).fill(null))];
                                       newPropResults[i] = val;
-                                      const updated = { ...freshLR, propResults: newPropResults };
-                                      await patchLiveResults(updated, val===null ? null : "propResults_"+i);
-                                      if (val===null) await clearOverride("propResults_"+i);
+                                      await settlePut("propResults/"+i, val);
+                                      setLiveResults({ ...freshLR, propResults: newPropResults });
                                     }} style={{
                                       padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
-                                      borderColor: active ? (val===true?"#8fffb0":val===false?"#ff9090":"rgba(255,255,255,0.3)") : "rgba(255,255,255,0.1)",
-                                      background: active ? (val===true?"rgba(100,255,150,0.15)":val===false?"rgba(255,100,100,0.15)":"rgba(255,255,255,0.05)") : "rgba(255,255,255,0.03)",
-                                      color: active ? (val===true?"#8fffb0":val===false?"#ff9090":"#9ab8a0") : "#555",
+                                      borderColor: active ? (val===true?"#8fffb0":"#ff9090") : "rgba(255,255,255,0.1)",
+                                      background: active ? (val===true?"rgba(100,255,150,0.15)":"rgba(255,100,100,0.15)") : "rgba(255,255,255,0.03)",
+                                      color: active ? (val===true?"#8fffb0":"#ff9090") : "#555",
                                     }}>{label}</button>
                                   );
                                 })}
-                                {settled && (
-                                  <button title="Permanently lock this result — removes override flag" onClick={async () => {
-                                    await clearOverride("propResults_"+i);
-                                  }} style={{ padding:"3px 8px", borderRadius:4, border:"1px solid rgba(100,200,100,0.4)", fontSize:11, cursor:"pointer", background:"rgba(100,200,100,0.1)", color:"#8fffb0" }}>🔐</button>
-                                )}
                               </div>
                             </div>
                           );
@@ -4182,7 +4116,6 @@ export default function WorldCupPool() {
                               const freshLiveResults = fresh.liveResults || {};
                               const freshLivePhase2 = fresh.livePhase2 || {};
                               const freshBracketSlots = fresh.bracketSlots || null;
-                              const freshOverrides = fresh.adminOverrides || {};
                               const groupRankings = freshLiveResults.groupRankings || {};
 
                               // Build a row lookup from sheet by match id
@@ -4212,9 +4145,8 @@ export default function WorldCupPool() {
                                     return;
                                   }
                                   winnersMap[match.id] = sheetWinner;
-                                  const alreadyLocked = !!freshOverrides["livePhase2_"+match.id];
                                   if (sheetWinner !== currentWinner) {
-                                    diff.push({ matchId: match.id, round, label: match.label, teamA, teamB, from: currentWinner, to: sheetWinner, alreadyLocked });
+                                    diff.push({ matchId: match.id, round, label: match.label, teamA, teamB, from: currentWinner, to: sheetWinner });
                                   }
                                 });
                               });
@@ -4243,16 +4175,11 @@ export default function WorldCupPool() {
                                   <button disabled={bracketSheetImport.applying} onClick={async () => {
                                     setBracketSheetImport(s => ({ ...s, applying:true }));
                                     try {
-                                      const fresh = await dbLoad();
-                                      const newLivePhase2 = { ...(fresh.livePhase2 || {}) };
                                       const applied = bracketSheetImport.diff.filter(d=>!d.error);
-                                      const newOverrideKeys = {};
-                                      applied.forEach(d => { newLivePhase2[d.matchId] = d.to; newOverrideKeys["livePhase2_"+d.matchId] = true; });
-                                      setLivePhase2(newLivePhase2);
-                                      await dbPatch("livePhase2", newLivePhase2);
-                                      setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
-                                      for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
-                                      setBracketSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s) and locked them.` });
+                                      for (const d of applied) { await settlePut("livePhase2/"+d.matchId, d.to); }
+                                      const fresh = await dbLoad();
+                                      setLivePhase2(fresh.livePhase2);
+                                      setBracketSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s).` });
                                     } catch (e) {
                                       setBracketSheetImport(s => ({ ...s, applying:false, error:e.message }));
                                     }
@@ -4272,23 +4199,21 @@ export default function WorldCupPool() {
                               const winner = livePhase2?.[match.id];
                               return (
                                 <div key={match.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
-                                  <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label} {adminOverrides["livePhase2_"+match.id] && <span style={{ color:"#ffb060", fontSize:9 }}>🔒</span>}</span>
+                                  <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label}</span>
                                   <div style={{ display:"flex", gap:4, flex:1 }}>
-                                    {[teamA, teamB, null].map((team, ti) => {
-                                      const label = team===null ? "—" : team;
+                                    {[teamA, teamB].map((team, ti) => {
                                       const active = winner === team;
                                       return (
                                         <button key={ti} onClick={async () => {
                                           const fresh = await dbLoad();
-                                          const updated = { ...(fresh.livePhase2||{}), [match.id]: team };
-                                          await patchLivePhase2(updated, team===null ? null : "livePhase2_"+match.id);
-                                          if (team===null) await clearOverride("livePhase2_"+match.id);
+                                          await settlePut("livePhase2/"+match.id, team);
+                                          setLivePhase2({ ...(fresh.livePhase2||{}), [match.id]: team });
                                         }} style={{
                                           padding:"3px 8px", borderRadius:4, border:"1px solid", fontSize:10, cursor:"pointer",
                                           borderColor: active ? "#8fffb0" : "rgba(255,255,255,0.1)",
                                           background: active ? "rgba(100,255,150,0.15)" : "rgba(255,255,255,0.03)",
-                                          color: active ? "#8fffb0" : team===null?"#555":"#c8b8a0",
-                                        }}>{label}</button>
+                                          color: active ? "#8fffb0" : "#c8b8a0",
+                                        }}>{team}</button>
                                       );
                                     })}
                                   </div>
@@ -4309,7 +4234,6 @@ export default function WorldCupPool() {
                               const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
                               const freshLiveP2Props = fresh.liveP2Props || {};
-                              const freshOverrides = fresh.adminOverrides || {};
                               const diff = [];
                               sheet.prop2.forEach(row => {
                                 const id = (row.id || "").trim();
@@ -4318,10 +4242,9 @@ export default function WorldCupPool() {
                                 const sheetVal = parseYesNo(row.result);
                                 if (sheetVal === null) return; // blank in sheet — nothing to import
                                 const currentVal = freshLiveP2Props[id];
-                                const alreadyLocked = !!freshOverrides["liveP2Props_"+id];
                                 const changed = currentVal !== sheetVal;
                                 if (changed) {
-                                  diff.push({ id, round: prop.round, q: prop.q, from: currentVal, to: sheetVal, alreadyLocked });
+                                  diff.push({ id, round: prop.round, q: prop.q, from: currentVal, to: sheetVal });
                                 }
                               });
                               setP2PropSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
@@ -4344,21 +4267,15 @@ export default function WorldCupPool() {
                                     <span style={{ color:"#f0d060", minWidth:36 }}>{d.round.toUpperCase()}</span>
                                     <span style={{ flex:1, minWidth:120 }}>{d.q.substring(0,50)}…</span>
                                     <span>{d.from===true?"YES":d.from===false?"NO":"—"} → <b style={{ color:d.to?"#8fffb0":"#ff9090" }}>{d.to?"YES":"NO"}</b></span>
-                                    {d.alreadyLocked && <span style={{ color:"#ffb060" }}>🔒 currently locked — will be overwritten</span>}
                                   </div>
                                 ))}
                                 <button disabled={p2PropSheetImport.applying} onClick={async () => {
                                   setP2PropSheetImport(s => ({ ...s, applying:true }));
                                   try {
+                                    for (const d of p2PropSheetImport.diff) { await settlePut("liveP2Props/"+d.id, d.to); }
                                     const fresh = await dbLoad();
-                                    const newLiveP2Props = { ...(fresh.liveP2Props || {}) };
-                                    const newOverrideKeys = {};
-                                    p2PropSheetImport.diff.forEach(d => { newLiveP2Props[d.id] = d.to; newOverrideKeys["liveP2Props_"+d.id] = true; });
-                                    setLiveP2Props(newLiveP2Props);
-                                    await dbPatch("liveP2Props", newLiveP2Props);
-                                    setAdminOverrides(prev => ({ ...prev, ...newOverrideKeys }));
-                                    for (const k of Object.keys(newOverrideKeys)) { await setOverrideFlag(k); }
-                                    setP2PropSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${p2PropSheetImport.diff.length} update(s) and locked them.` });
+                                    setLiveP2Props(fresh.liveP2Props);
+                                    setP2PropSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${p2PropSheetImport.diff.length} update(s).` });
                                   } catch (e) {
                                     setP2PropSheetImport(s => ({ ...s, applying:false, error:e.message }));
                                   }
@@ -4373,32 +4290,24 @@ export default function WorldCupPool() {
                           return (
                             <div key={prop.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
                               <span style={{ fontSize:10, color:"#f0d060", minWidth:28 }}>{prop.round.toUpperCase()}</span>
-                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}… {adminOverrides["liveP2Props_"+prop.id] && <span style={{ color:"#ffb060", fontSize:9 }}>🔒</span>}</span>
+                              <span style={{ fontSize:11, color:"#c8b8a0", flex:1, minWidth:120 }}>{prop.q.substring(0,60)}…</span>
                               <div style={{ display:"flex", gap:4 }}>
-                                {[true, false, null].map(val => {
-                                  const label = val===true?"YES":val===false?"NO":"—";
-                                  const active = settled ? actual===val : val===null;
+                                {[true, false].map(val => {
+                                  const label = val===true?"YES":"NO";
+                                  const active = settled && actual===val;
                                   return (
                                     <button key={label} onClick={async () => {
                                       const fresh = await dbLoad();
-                                      const updated = { ...(fresh.liveP2Props||{}), [prop.id]: val };
-                                      setLiveP2Props(updated);
-                                      await dbPatch("liveP2Props", updated);
-                                      if (val===null) { await clearOverride("liveP2Props_"+prop.id); }
-                                      else { await setOverride("liveP2Props_"+prop.id); }
+                                      await settlePut("liveP2Props/"+prop.id, val);
+                                      setLiveP2Props({ ...(fresh.liveP2Props||{}), [prop.id]: val });
                                     }} style={{
                                       padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
-                                      borderColor: active ? (val===true?"#8fffb0":val===false?"#ff9090":"rgba(255,255,255,0.3)") : "rgba(255,255,255,0.1)",
-                                      background: active ? (val===true?"rgba(100,255,150,0.15)":val===false?"rgba(255,100,100,0.15)":"rgba(255,255,255,0.05)") : "rgba(255,255,255,0.03)",
-                                      color: active ? (val===true?"#8fffb0":val===false?"#ff9090":"#9ab8a0") : "#555",
+                                      borderColor: active ? (val===true?"#8fffb0":"#ff9090") : "rgba(255,255,255,0.1)",
+                                      background: active ? (val===true?"rgba(100,255,150,0.15)":"rgba(255,100,100,0.15)") : "rgba(255,255,255,0.03)",
+                                      color: active ? (val===true?"#8fffb0":"#ff9090") : "#555",
                                     }}>{label}</button>
                                   );
                                 })}
-                                {(liveP2Props?.[prop.id] !== null && liveP2Props?.[prop.id] !== undefined) && (
-                                  <button title="Permanently lock this result" onClick={async () => {
-                                    await clearOverride("liveP2Props_"+prop.id);
-                                  }} style={{ padding:"3px 8px", borderRadius:4, border:"1px solid rgba(100,200,100,0.4)", fontSize:11, cursor:"pointer", background:"rgba(100,200,100,0.1)", color:"#8fffb0" }}>🔐</button>
-                                )}
                               </div>
                             </div>
                           );
@@ -4572,8 +4481,7 @@ export default function WorldCupPool() {
                   if (data.liveResults) setLiveResults(data.liveResults);
                   if (data.livePhase2) setLivePhase2(data.livePhase2);
                   if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
-                  if (data.adminOverrides) setAdminOverrides(data.adminOverrides);
-                  setFetchStatus("done");
+                            setFetchStatus("done");
                 } catch {}
                 setLbLoading(false);
               }} style={{ ...S.btn, fontSize:11, padding:"6px 12px" }}>
