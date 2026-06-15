@@ -2064,14 +2064,30 @@ export default function WorldCupPool() {
       Object.entries(r.groupRankings || {}).forEach(([g, ranking]) => {
         normalizedGroupRankings[g] = Array.isArray(ranking) ? ranking.map(normalizeTeamName) : ranking;
       });
-      // Merge API result with any admin-overridden cells before persisting
+      // Merge API result with existing DB state before persisting.
+      // Rule: an already-settled value in the DB is NEVER overwritten by a
+      // null/missing value from a fresh API fetch — with or without an
+      // override flag. Override flags still let an admin's explicit call
+      // take priority when the API also returns a (different) non-null value.
       const mergedGroupRankings = { ...normalizedGroupRankings };
       Object.keys(mergedGroupRankings).forEach(g => {
-        if (freshOverrides["groupRankings_"+g]) mergedGroupRankings[g] = freshLiveResults?.groupRankings?.[g] || mergedGroupRankings[g];
+        const existing = freshLiveResults?.groupRankings?.[g];
+        const fresh = mergedGroupRankings[g];
+        if (freshOverrides["groupRankings_"+g] && existing) {
+          mergedGroupRankings[g] = existing; // admin override always wins
+        } else if (!fresh && existing) {
+          mergedGroupRankings[g] = existing; // never null-out a settled result
+        }
       });
       const mergedPropResults = [...(r.propResults || [])];
       mergedPropResults.forEach((_, i) => {
-        if (freshOverrides["propResults_"+i] && freshLiveResults?.propResults?.[i] !== undefined && freshLiveResults?.propResults?.[i] !== null) mergedPropResults[i] = freshLiveResults.propResults[i];
+        const existing = freshLiveResults?.propResults?.[i];
+        const fresh = mergedPropResults[i];
+        if (freshOverrides["propResults_"+i] && existing !== undefined && existing !== null) {
+          mergedPropResults[i] = existing; // admin override always wins
+        } else if ((fresh === undefined || fresh === null) && existing !== undefined && existing !== null) {
+          mergedPropResults[i] = existing; // never null-out a settled result
+        }
       });
       const mergedLiveResults = { ...r, groupRankings: mergedGroupRankings, propResults: mergedPropResults };
       setLiveResults(mergedLiveResults); setLastFetched(new Date()); setFetchStatus("done");
@@ -2115,7 +2131,13 @@ export default function WorldCupPool() {
               Object.entries(p2.knockoutWinners).forEach(([k, v]) => { normalizedWinners[k] = v ? normalizeTeamName(v) : v; });
               const mergedPhase2 = { ...normalizedWinners };
               Object.keys(mergedPhase2).forEach(matchId => {
-                if (freshOverrides["livePhase2_"+matchId] && freshLivePhase2?.[matchId] !== undefined) mergedPhase2[matchId] = freshLivePhase2[matchId];
+                const existing = freshLivePhase2?.[matchId];
+                const fresh = mergedPhase2[matchId];
+                if (freshOverrides["livePhase2_"+matchId] && existing !== undefined) {
+                  mergedPhase2[matchId] = existing; // admin override always wins
+                } else if ((fresh === undefined || fresh === null) && existing !== undefined && existing !== null) {
+                  mergedPhase2[matchId] = existing; // never null-out a settled result
+                }
               });
               // Carry forward finalFirstGoalMinute once known — never overwrite with null
               if (p2.finalFirstGoalMinute != null) mergedPhase2.finalFirstGoalMinute = p2.finalFirstGoalMinute;
@@ -2127,7 +2149,13 @@ export default function WorldCupPool() {
             if (p2.p2PropResults) {
               const mergedP2Props = { ...(p2.p2PropResults || {}) };
               Object.keys(mergedP2Props).forEach(propId => {
-                if (freshOverrides["liveP2Props_"+propId] && freshLiveP2Props?.[propId] !== undefined) mergedP2Props[propId] = freshLiveP2Props[propId];
+                const existing = freshLiveP2Props?.[propId];
+                const fresh = mergedP2Props[propId];
+                if (freshOverrides["liveP2Props_"+propId] && existing !== undefined) {
+                  mergedP2Props[propId] = existing; // admin override always wins
+                } else if ((fresh === undefined || fresh === null) && existing !== undefined && existing !== null) {
+                  mergedP2Props[propId] = existing; // never null-out a settled result
+                }
               });
               setLiveP2Props(mergedP2Props);
               await dbPatch("liveP2Props", mergedP2Props);
