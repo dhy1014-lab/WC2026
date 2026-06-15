@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 // ── FIREBASE CONFIG ───────────────────────────────────────────────────────────
 const DB_URL = "https://wc2026-306ec-default-rtdb.firebaseio.com";
-// Published Google Sheet (CSV) tracking daily prop results — used for admin "Import from Sheet"
-const PROP_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRwLpduDNVZFyreiOFtWhlDFtvFVKVfXcwGFfw_656YE5834VUEgsYKzCkFyzen7C0MvfP6sht2_rdZ/pub?output=csv";
+// Published Google Sheet (CSV) — unified scoresheet covering Phase 1 props, group results,
+// Phase 2 props, knockout bracket, and Golden Boot (one tab, distinguished by "Type" column).
+const SCORESHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTfGJNbabivLzUZLCzx1l3UpotLgZ3odcqtL7h5Z6rn9ukHLpZ_82un2CHQg7hd1CJ0azW2wdH4FRtV/pub?output=csv";
 // Build marker — bump this string on each deploy. Helps identify stale tabs running old JS
 // (check browser console: a tab logging an old BUILD_ID is running outdated code and should be refreshed).
 const BUILD_ID = "2026-06-14-overrides-guard";
@@ -405,6 +406,49 @@ function getDownstreamMatches(matchId) {
   return downstream;
 }
 
+// Find a match definition by id across all rounds
+function findKnockoutMatch(matchId) {
+  for (const round of Object.values(KNOCKOUT_ROUNDS)) {
+    const m = round.find(mm => mm.id === matchId);
+    if (m) return m;
+  }
+  return null;
+}
+
+// Resolve a bracket slot (1A, 2C, 3ABC, W_r32_1, L_sf_1, ...) to a team name (or null if unresolved).
+// - 1X/2X resolve directly from groupRankings[X][0]/[1] (1st/2nd place)
+// - 3xxx resolve from bracketSlots (best-3rd-place ranking — computed via API, not derivable client-side)
+// - W_matchId resolves from winnersMap[matchId] (falls back to livePhase2[matchId])
+// - L_sf_X resolves to the non-winner of that SF match
+function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, livePhase2 }) {
+  if (!slot) return null;
+  if (/^[12][A-L]$/.test(slot)) {
+    const pos = slot[0] === "1" ? 0 : 1;
+    const g = slot[1];
+    return groupRankings?.[g]?.[pos] || null;
+  }
+  if (slot.startsWith("3")) {
+    return bracketSlots?.[slot] || null;
+  }
+  if (slot.startsWith("W_")) {
+    const matchId = slot.slice(2);
+    return (winnersMap && winnersMap[matchId]) || livePhase2?.[matchId] || null;
+  }
+  if (slot.startsWith("L_")) {
+    const matchId = slot.slice(2);
+    const winner = (winnersMap && winnersMap[matchId]) || livePhase2?.[matchId] || null;
+    if (!winner) return null;
+    const m = findKnockoutMatch(matchId);
+    if (!m) return null;
+    const teamA = resolveBracketSlot(m.slotA, { groupRankings, bracketSlots, winnersMap, livePhase2 });
+    const teamB = resolveBracketSlot(m.slotB, { groupRankings, bracketSlots, winnersMap, livePhase2 });
+    if (teamA && teamA !== winner) return teamA;
+    if (teamB && teamB !== winner) return teamB;
+    return null;
+  }
+  return null;
+}
+
 // ── PHASE 2 PROPS ─────────────────────────────────────────────────────────────
 // 15 props across 5 rounds (3 per round), each locking at that round's first kickoff
 // ptsYes + ptsNo = 10 (weighted by likelihood); Golden Boot prop (#15) sums to 20
@@ -634,27 +678,35 @@ function parseCSV(text) {
   return rows;
 }
 
-// Fetch the published prop-results sheet and return { [propIndex]: "YES"|"NO"|"" }
-async function fetchPropSheetResults() {
-  const r = await fetch(PROP_SHEET_CSV_URL);
+// Fetch the unified scoresheet CSV once and group rows by their "Type" column.
+// Returns { prop1: [...], group: [...], prop2: [...], bracket: [...], goldenboot: [...] }
+// Each row is an object keyed by header name (lowercased): type, id, field1..field6, result, ptsawarded, locked, notes
+async function fetchScoresheet() {
+  const r = await fetch(SCORESHEET_CSV_URL);
   if (!r.ok) throw new Error(`Sheet fetch error ${r.status}`);
   const text = await r.text();
   const rows = parseCSV(text);
   if (!rows.length) throw new Error("Sheet returned no rows");
   const header = rows[0].map(h => h.trim().toLowerCase());
-  const idxCol = header.indexOf("#");
-  const resultCol = header.indexOf("result");
-  if (idxCol === -1 || resultCol === -1) throw new Error("Sheet missing '#' or 'Result' column");
-  const out = {};
+  const typeCol = header.indexOf("type");
+  if (typeCol === -1) throw new Error("Sheet missing 'Type' column");
+  const grouped = { prop1: [], group: [], prop2: [], bracket: [], goldenboot: [] };
   for (let i = 1; i < rows.length; i++) {
     const cols = rows[i];
-    if (!cols || cols.length <= Math.max(idxCol, resultCol)) continue;
-    const propIdx = parseInt(cols[idxCol], 10);
-    if (Number.isNaN(propIdx)) continue;
-    const result = (cols[resultCol] || "").trim().toUpperCase();
-    out[propIdx] = result === "YES" ? true : result === "NO" ? false : null;
+    if (!cols || cols.length <= typeCol) continue;
+    const type = (cols[typeCol] || "").trim().toLowerCase();
+    if (!grouped[type]) continue; // skip unknown/blank row types
+    const obj = {};
+    header.forEach((h, idx) => { obj[h] = (cols[idx] !== undefined ? cols[idx] : "").trim(); });
+    grouped[type].push(obj);
   }
-  return out;
+  return grouped;
+}
+
+// Parse a YES/NO/blank string into true/false/null
+function parseYesNo(val) {
+  const v = (val || "").trim().toUpperCase();
+  return v === "YES" ? true : v === "NO" ? false : null;
 }
 
 // ── CLAUDE API FOR LIVE RESULTS ───────────────────────────────────────────────
@@ -1441,6 +1493,44 @@ function RankPicker({ teams, ranking, onChange, locked=false }) {
   );
 }
 
+// ── BRACKET IMPORT TREE ───────────────────────────────────────────────────────
+// Read-only preview of bracket-import changes, grouped by round (R32 → Final)
+// to mirror the actual tournament tree structure. Shows Team A vs Team B and
+// the from→to winner change for each affected match.
+function BracketImportTree({ diff }) {
+  if (!diff.length) return null;
+  const roundOrder = ["r32","r16","qf","sf","third","final"];
+  const byRound = {};
+  diff.forEach(d => { (byRound[d.round] = byRound[d.round] || []).push(d); });
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {roundOrder.filter(r => byRound[r]).map(round => (
+        <div key={round}>
+          <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:4, letterSpacing:1 }}>{ROUND_LABELS[round]}</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            {byRound[round].map(d => (
+              <div key={d.matchId} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:6, padding:"6px 10px", fontSize:11, color:"#c8b8a0" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                  <span style={{ color:"#9ab8a0" }}>{d.label}</span>
+                  {d.alreadyLocked && <span style={{ color:"#ffb060", fontSize:9 }}>🔒 locked — will be overwritten</span>}
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                  <span style={{ color: d.to===d.teamA ? "#8fffb0" : "#c8b8a0" }}>{d.teamA ? <>{tf(d.teamA)} {d.teamA}</> : "—"}</span>
+                  <span style={{ color:"#666" }}>vs</span>
+                  <span style={{ color: d.to===d.teamB ? "#8fffb0" : "#c8b8a0" }}>{d.teamB ? <>{tf(d.teamB)} {d.teamB}</> : "—"}</span>
+                  <span style={{ marginLeft:"auto", color:"#666" }}>→</span>
+                  <span style={{ color:"#8fffb0", fontWeight:"bold" }}>{d.to}</span>
+                  {d.from && <span style={{ color:"#666", fontSize:10 }}>(was {d.from})</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── VISUAL BRACKET ────────────────────────────────────────────────────────────
 // Scrollable horizontal bracket: R32 left → Final center → R32 right
 // 16 matches per side, converging inward round by round
@@ -1771,6 +1861,10 @@ export default function WorldCupPool() {
   const [adminOverrides, setAdminOverrides] = useState({});
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [sheetImport, setSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [groupSheetImport, setGroupSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [p2PropSheetImport, setP2PropSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [gbSheetImport, setGbSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [bracketSheetImport, setBracketSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const adminSessionToken = useRef(null);
   const [adminTab, setAdminTab]           = useState("settings");
   const [auditPhase, setAuditPhase]       = useState("p1");
@@ -3638,7 +3732,86 @@ export default function WorldCupPool() {
                     <div>
                       {/* Group Results */}
                       <div style={S.card}>
-                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🏅 GROUP RESULTS — click a position to edit</div>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                          <span>🏅 GROUP RESULTS — click a position to edit</span>
+                          <button disabled={groupSheetImport.loading} onClick={async () => {
+                            setGroupSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
+                            try {
+                              const sheet = await fetchScoresheet();
+                              const fresh = await dbLoad();
+                              const freshLR = fresh.liveResults || {};
+                              const freshOverrides = fresh.adminOverrides || {};
+                              const currentRankings = freshLR.groupRankings || {};
+                              const diff = [];
+                              sheet.group.forEach(row => {
+                                const g = (row.id || "").trim().toUpperCase();
+                                if (!TEAMS_BY_GROUP[g]) return;
+                                const sheetRanking = [row.field1, row.field2, row.field3, row.field4].map(t => (t||"").trim());
+                                if (sheetRanking.every(t => !t)) return; // all blank — nothing to import
+                                // Validate team names against TEAMS_BY_GROUP[g]
+                                const validTeams = new Set(TEAMS_BY_GROUP[g]);
+                                const invalid = sheetRanking.filter(t => t && !validTeams.has(t));
+                                if (invalid.length) {
+                                  diff.push({ g, error: `Unknown team(s) for Group ${g}: ${invalid.join(", ")}` });
+                                  return;
+                                }
+                                const currentRanking = currentRankings[g] || [null,null,null,null];
+                                const alreadyLocked = !!freshOverrides["groupRankings_"+g];
+                                const changed = JSON.stringify(currentRanking) !== JSON.stringify(sheetRanking.map(t => t || null));
+                                if (changed) {
+                                  diff.push({ g, from: currentRanking, to: sheetRanking.map(t => t || null), alreadyLocked });
+                                }
+                              });
+                              setGroupSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
+                            } catch (e) {
+                              setGroupSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
+                            }
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{groupSheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                        </div>
+                        {groupSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {groupSheetImport.error}</div>}
+                        {groupSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{groupSheetImport.done}</div>}
+                        {groupSheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {groupSheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current results.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#f0d060", marginBottom:6 }}>Changes found ({groupSheetImport.diff.filter(d=>!d.error).length}), errors ({groupSheetImport.diff.filter(d=>d.error).length}):</div>
+                                {groupSheetImport.diff.map((d,idx) => d.error ? (
+                                  <div key={idx} style={{ fontSize:11, color:"#ff9090", marginBottom:4 }}>⚠️ {d.error}</div>
+                                ) : (
+                                  <div key={idx} style={{ fontSize:11, color:"#c8b8a0", marginBottom:4, display:"flex", gap:6, flexWrap:"wrap" }}>
+                                    <span style={{ color:"#9ab8a0", minWidth:50 }}>Group {d.g}</span>
+                                    <span>{d.from.map(t=>t||"—").join(", ")} → <b style={{ color:"#8fffb0" }}>{d.to.map(t=>t||"—").join(", ")}</b></span>
+                                    {d.alreadyLocked && <span style={{ color:"#ffb060" }}>🔒 currently locked — will be overwritten</span>}
+                                  </div>
+                                ))}
+                                {groupSheetImport.diff.some(d=>!d.error) && (
+                                  <button disabled={groupSheetImport.applying} onClick={async () => {
+                                    setGroupSheetImport(s => ({ ...s, applying:true }));
+                                    try {
+                                      const fresh = await dbLoad();
+                                      const freshLR = fresh.liveResults || {};
+                                      const freshOverrides = fresh.adminOverrides || {};
+                                      const newRankings = { ...(freshLR.groupRankings || {}) };
+                                      const newOverrides = { ...freshOverrides };
+                                      const applied = groupSheetImport.diff.filter(d=>!d.error);
+                                      applied.forEach(d => { newRankings[d.g] = d.to; newOverrides["groupRankings_"+d.g] = true; });
+                                      const updated = { ...freshLR, groupRankings: newRankings };
+                                      setLiveResults(updated);
+                                      await dbPatch("liveResults", updated);
+                                      setAdminOverrides(newOverrides);
+                                      await dbPatch("adminOverrides", newOverrides);
+                                      setGroupSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s) and locked them.` });
+                                    } catch (e) {
+                                      setGroupSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                    }
+                                  }} style={{ ...S.btn, fontSize:11, padding:"4px 12px", marginTop:6 }}>{groupSheetImport.applying ? "Applying…" : `Apply ${groupSheetImport.diff.filter(d=>!d.error).length} change(s)`}</button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
                           {Object.keys(TEAMS_BY_GROUP).map(g => {
                             const actual = liveResults?.groupRankings?.[g] || [null,null,null,null];
@@ -3698,15 +3871,16 @@ export default function WorldCupPool() {
                           <button disabled={sheetImport.loading} onClick={async () => {
                             setSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
                             try {
-                              const sheetResults = await fetchPropSheetResults();
+                              const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
                               const freshLR = fresh.liveResults || {};
                               const freshOverrides = fresh.adminOverrides || {};
                               const currentProps = freshLR.propResults || Array(34).fill(null);
                               const diff = [];
-                              Object.entries(sheetResults).forEach(([idxStr, sheetVal]) => {
-                                const i = parseInt(idxStr, 10);
-                                if (i < 0 || i >= DAILY_PROPS.length) return;
+                              sheet.prop1.forEach(row => {
+                                const i = parseInt(row.id, 10);
+                                if (Number.isNaN(i) || i < 0 || i >= DAILY_PROPS.length) return;
+                                const sheetVal = parseYesNo(row.result);
                                 if (sheetVal === null) return; // blank in sheet — nothing to import
                                 const currentVal = currentProps[i];
                                 const alreadyLocked = !!freshOverrides["propResults_"+i];
@@ -3894,7 +4068,65 @@ export default function WorldCupPool() {
 
                       {/* Golden Boot */}
                       <div style={S.card}>
-                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1 }}>🥾 GOLDEN BOOT {goldenBoot?.options ? <span style={{ color:"#8fffb0" }}>✓ options set</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}{goldenBoot?.answer && <span style={{ color:"#8fffb0" }}> · Winner: <strong>{goldenBoot.answer}</strong></span>}</div>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                          <span>🥾 GOLDEN BOOT {goldenBoot?.options ? <span style={{ color:"#8fffb0" }}>✓ options set</span> : <span style={{ color:"#aab0ff" }}>⏳ pending</span>}{goldenBoot?.answer && <span style={{ color:"#8fffb0" }}> · Winner: <strong>{goldenBoot.answer}</strong></span>}</span>
+                          <button disabled={gbSheetImport.loading} onClick={async () => {
+                            setGbSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
+                            try {
+                              const sheet = await fetchScoresheet();
+                              const fresh = await dbLoad();
+                              const freshGb = fresh.goldenBoot || null;
+                              if (!freshGb?.options) {
+                                setGbSheetImport({ loading:false, error:"Golden Boot options haven't been fetched yet — use 'Re-fetch Options' first.", diff:null, applying:false, done:"" });
+                                return;
+                              }
+                              const validNames = new Set([...freshGb.options.map(o=>o.name), "Other"]);
+                              const winners = sheet.goldenboot.filter(row => parseYesNo(row.result) === true);
+                              if (winners.length === 0) {
+                                setGbSheetImport({ loading:false, error:"", diff:[], applying:false, done:"" });
+                                return;
+                              }
+                              if (winners.length > 1) {
+                                setGbSheetImport({ loading:false, error:`Multiple rows marked YES (${winners.map(w=>w.id).join(", ")}) — only one winner allowed.`, diff:null, applying:false, done:"" });
+                                return;
+                              }
+                              const winnerName = (winners[0].id || "").trim();
+                              if (!validNames.has(winnerName)) {
+                                setGbSheetImport({ loading:false, error:`"${winnerName}" doesn't match current Golden Boot options (${[...validNames].join(", ")}).`, diff:null, applying:false, done:"" });
+                                return;
+                              }
+                              const changed = freshGb.answer !== winnerName;
+                              setGbSheetImport({ loading:false, error:"", diff: changed ? [{ from: freshGb.answer, to: winnerName }] : [], applying:false, done:"" });
+                            } catch (e) {
+                              setGbSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
+                            }
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{gbSheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                        </div>
+                        {gbSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {gbSheetImport.error}</div>}
+                        {gbSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{gbSheetImport.done}</div>}
+                        {gbSheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {gbSheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current results.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#c8b8a0", marginBottom:6 }}>Winner: {gbSheetImport.diff[0].from || "—"} → <b style={{ color:"#8fffb0" }}>{gbSheetImport.diff[0].to}</b></div>
+                                <button disabled={gbSheetImport.applying} onClick={async () => {
+                                  setGbSheetImport(s => ({ ...s, applying:true }));
+                                  try {
+                                    const fresh = await dbLoad();
+                                    const updated = { ...(fresh.goldenBoot||{}), answer: gbSheetImport.diff[0].to };
+                                    setGoldenBoot(updated);
+                                    await dbPatch("goldenBoot", updated);
+                                    setGbSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Set Golden Boot winner to ${gbSheetImport.diff[0].to}.` });
+                                  } catch (e) {
+                                    setGbSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                  }
+                                }} style={{ ...S.btn, fontSize:11, padding:"4px 12px" }}>{gbSheetImport.applying ? "Applying…" : "Apply"}</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                         <div style={{ display:"flex", gap:8, marginBottom:goldenBoot?.options?10:0 }}>
                           <button onClick={async () => {
                             setFetchStatus("loading");
@@ -3929,7 +4161,97 @@ export default function WorldCupPool() {
 
                       {/* Bracket Match Results */}
                       <div style={S.card}>
-                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🏆 BRACKET MATCH RESULTS</div>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                          <span>🏆 BRACKET MATCH RESULTS</span>
+                          <button disabled={bracketSheetImport.loading} onClick={async () => {
+                            setBracketSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
+                            try {
+                              const sheet = await fetchScoresheet();
+                              const fresh = await dbLoad();
+                              const freshLiveResults = fresh.liveResults || {};
+                              const freshLivePhase2 = fresh.livePhase2 || {};
+                              const freshBracketSlots = fresh.bracketSlots || null;
+                              const freshOverrides = fresh.adminOverrides || {};
+                              const groupRankings = freshLiveResults.groupRankings || {};
+
+                              // Build a row lookup from sheet by match id
+                              const sheetRows = {};
+                              sheet.bracket.forEach(row => { if (row.id) sheetRows[row.id.trim()] = row; });
+
+                              const winnersMap = {}; // matchId -> winner team name (sheet values applied so far, for downstream resolution)
+                              const diff = [];
+                              const allRounds = ["r32","r16","qf","sf","third","final"];
+                              allRounds.forEach(round => {
+                                (KNOCKOUT_ROUNDS[round] || []).forEach(match => {
+                                  const ctx = { groupRankings, bracketSlots: freshBracketSlots, winnersMap, livePhase2: freshLivePhase2 };
+                                  const teamA = resolveBracketSlot(match.slotA, ctx);
+                                  const teamB = resolveBracketSlot(match.slotB, ctx);
+                                  const row = sheetRows[match.id];
+                                  const sheetWinner = (row?.result || "").trim();
+                                  const currentWinner = freshLivePhase2[match.id] || null;
+                                  if (!sheetWinner) {
+                                    // No sheet value — carry forward existing winner (if any) so downstream slots still resolve
+                                    if (currentWinner) winnersMap[match.id] = currentWinner;
+                                    return;
+                                  }
+                                  // Validate the sheet's winner matches one of the resolved teams (when both are known)
+                                  if (teamA && teamB && sheetWinner !== teamA && sheetWinner !== teamB) {
+                                    diff.push({ matchId: match.id, round, label: match.label, error: `"${sheetWinner}" is not ${teamA} or ${teamB} for ${match.label}` });
+                                    if (currentWinner) winnersMap[match.id] = currentWinner;
+                                    return;
+                                  }
+                                  winnersMap[match.id] = sheetWinner;
+                                  const alreadyLocked = !!freshOverrides["livePhase2_"+match.id];
+                                  if (sheetWinner !== currentWinner) {
+                                    diff.push({ matchId: match.id, round, label: match.label, teamA, teamB, from: currentWinner, to: sheetWinner, alreadyLocked });
+                                  }
+                                });
+                              });
+                              setBracketSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
+                            } catch (e) {
+                              setBracketSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
+                            }
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{bracketSheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                        </div>
+                        {bracketSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {bracketSheetImport.error}</div>}
+                        {bracketSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{bracketSheetImport.done}</div>}
+                        {bracketSheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {bracketSheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current results.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#f0d060", marginBottom:8 }}>
+                                  Changes found ({bracketSheetImport.diff.filter(d=>!d.error).length}), errors ({bracketSheetImport.diff.filter(d=>d.error).length}):
+                                </div>
+                                {bracketSheetImport.diff.filter(d=>d.error).map((d,idx) => (
+                                  <div key={"err"+idx} style={{ fontSize:11, color:"#ff9090", marginBottom:4 }}>⚠️ {d.error}</div>
+                                ))}
+                                <BracketImportTree diff={bracketSheetImport.diff.filter(d=>!d.error)} />
+                                {bracketSheetImport.diff.some(d=>!d.error) && (
+                                  <button disabled={bracketSheetImport.applying} onClick={async () => {
+                                    setBracketSheetImport(s => ({ ...s, applying:true }));
+                                    try {
+                                      const fresh = await dbLoad();
+                                      const newLivePhase2 = { ...(fresh.livePhase2 || {}) };
+                                      const newOverrides = { ...(fresh.adminOverrides || {}) };
+                                      const applied = bracketSheetImport.diff.filter(d=>!d.error);
+                                      applied.forEach(d => { newLivePhase2[d.matchId] = d.to; newOverrides["livePhase2_"+d.matchId] = true; });
+                                      setLivePhase2(newLivePhase2);
+                                      await dbPatch("livePhase2", newLivePhase2);
+                                      setAdminOverrides(newOverrides);
+                                      await dbPatch("adminOverrides", newOverrides);
+                                      setBracketSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s) and locked them.` });
+                                    } catch (e) {
+                                      setBracketSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                    }
+                                  }} style={{ ...S.btn, fontSize:11, padding:"4px 12px", marginTop:8 }}>{bracketSheetImport.applying ? "Applying…" : `Apply ${bracketSheetImport.diff.filter(d=>!d.error).length} change(s)`}</button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>All matches</div>
                         {Object.entries(KNOCKOUT_ROUNDS).map(([round, matches]) => (
                           <div key={round} style={{ marginBottom:14 }}>
                             <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{ROUND_LABELS[round]} <span style={{ color:"#9ab8a0", fontWeight:"normal" }}>({ROUND_PTS[round]}pts)</span></div>
@@ -3968,7 +4290,72 @@ export default function WorldCupPool() {
 
                       {/* P2 Prop Results */}
                       <div style={S.card}>
-                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>🎲 P2 PROP RESULTS — toggle to override</div>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                          <span>🎲 P2 PROP RESULTS — toggle to override</span>
+                          <button disabled={p2PropSheetImport.loading} onClick={async () => {
+                            setP2PropSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
+                            try {
+                              const sheet = await fetchScoresheet();
+                              const fresh = await dbLoad();
+                              const freshLiveP2Props = fresh.liveP2Props || {};
+                              const freshOverrides = fresh.adminOverrides || {};
+                              const diff = [];
+                              sheet.prop2.forEach(row => {
+                                const id = (row.id || "").trim();
+                                const prop = P2_PROPS.find(p => p.id === id);
+                                if (!prop) return;
+                                const sheetVal = parseYesNo(row.result);
+                                if (sheetVal === null) return; // blank in sheet — nothing to import
+                                const currentVal = freshLiveP2Props[id];
+                                const alreadyLocked = !!freshOverrides["liveP2Props_"+id];
+                                const changed = currentVal !== sheetVal;
+                                if (changed) {
+                                  diff.push({ id, round: prop.round, q: prop.q, from: currentVal, to: sheetVal, alreadyLocked });
+                                }
+                              });
+                              setP2PropSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
+                            } catch (e) {
+                              setP2PropSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
+                            }
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 10px" }}>{p2PropSheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                        </div>
+                        {p2PropSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {p2PropSheetImport.error}</div>}
+                        {p2PropSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{p2PropSheetImport.done}</div>}
+                        {p2PropSheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {p2PropSheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current results.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#f0d060", marginBottom:6 }}>Changes found ({p2PropSheetImport.diff.length}):</div>
+                                {p2PropSheetImport.diff.map(d => (
+                                  <div key={d.id} style={{ fontSize:11, color:"#c8b8a0", marginBottom:4, display:"flex", gap:6, flexWrap:"wrap" }}>
+                                    <span style={{ color:"#f0d060", minWidth:36 }}>{d.round.toUpperCase()}</span>
+                                    <span style={{ flex:1, minWidth:120 }}>{d.q.substring(0,50)}…</span>
+                                    <span>{d.from===true?"YES":d.from===false?"NO":"—"} → <b style={{ color:d.to?"#8fffb0":"#ff9090" }}>{d.to?"YES":"NO"}</b></span>
+                                    {d.alreadyLocked && <span style={{ color:"#ffb060" }}>🔒 currently locked — will be overwritten</span>}
+                                  </div>
+                                ))}
+                                <button disabled={p2PropSheetImport.applying} onClick={async () => {
+                                  setP2PropSheetImport(s => ({ ...s, applying:true }));
+                                  try {
+                                    const fresh = await dbLoad();
+                                    const newLiveP2Props = { ...(fresh.liveP2Props || {}) };
+                                    const newOverrides = { ...(fresh.adminOverrides || {}) };
+                                    p2PropSheetImport.diff.forEach(d => { newLiveP2Props[d.id] = d.to; newOverrides["liveP2Props_"+d.id] = true; });
+                                    setLiveP2Props(newLiveP2Props);
+                                    await dbPatch("liveP2Props", newLiveP2Props);
+                                    setAdminOverrides(newOverrides);
+                                    await dbPatch("adminOverrides", newOverrides);
+                                    setP2PropSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${p2PropSheetImport.diff.length} update(s) and locked them.` });
+                                  } catch (e) {
+                                    setP2PropSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                  }
+                                }} style={{ ...S.btn, fontSize:11, padding:"4px 12px", marginTop:6 }}>{p2PropSheetImport.applying ? "Applying…" : `Apply ${p2PropSheetImport.diff.length} change(s)`}</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                         {P2_PROPS.map(prop => {
                           const actual = liveP2Props?.[prop.id];
                           const settled = actual !== null && actual !== undefined;
