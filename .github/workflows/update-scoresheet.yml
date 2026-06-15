@@ -1,0 +1,41 @@
+name: Update WC2026 Scoresheet
+
+on:
+  schedule:
+    # Runs daily at 13:00 UTC (6am PT / 9am ET) — adjust as needed.
+    # Cron is always UTC.
+    - cron: "0 13 * * *"
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write   # needed so the workflow can commit the updated xlsx
+
+jobs:
+  update-scoresheet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r worldcup-pool/scripts/requirements.txt
+
+      - name: Run scoresheet updater
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          python3 worldcup-pool/scripts/update_scoresheet.py \
+            --file worldcup-pool/WC2026_scoresheet_unified.xlsx
+
+      - name: Commit changes if any
+        run: |
+          git config user.name "wc2026-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add worldcup-pool/WC2026_scoresheet_unified.xlsx
+          git diff --cached --quiet || git commit -m "Auto-update scoresheet $(date -u +%Y-%m-%d)"
+          git push
