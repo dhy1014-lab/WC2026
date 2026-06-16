@@ -13,7 +13,7 @@ async function dbLoad() {
   const r = await fetch(`${DB_URL}/pool.json`);
   if (!r.ok) throw new Error(`Firebase error ${r.status}`);
   const data = await r.json();
-  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] }, goldenBoot: null, bracketSlots: null, liveP2Props: null, liveResults: null, livePhase2: null };
+  if (!data) return { players: [], predictions: {}, paid: {}, settings: { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] }, goldenBoot: null, bracketSlots: null, p2PropResults: null, liveResults: null, bracketWinners: null };
   // Read settled results from pool/settled/* — the canonical source of truth.
   // Fall back to pool/liveResults for migration of any previously-saved data.
   const settled = data.settled || {};
@@ -31,18 +31,27 @@ async function dbLoad() {
   const liveResults = (propResults || groupRankings)
     ? { propResults: propResults || Array(34).fill(null), groupRankings: groupRankings || {}, totalGoals: settled.totalGoals ?? legacyLR?.totalGoals ?? null }
     : null;
-  const livePhase2 = settled.livePhase2 || data.livePhase2 || null;
-  const liveP2Props = settled.liveP2Props || data.liveP2Props || null;
+  // bracketWinners — settled knockout match winners (legacy: data.livePhase2)
+  const bracketWinners = settled.bracketWinners || data.livePhase2 || null;
+  // p2PropResults — settled P2 prop results (legacy: data.liveP2Props)
+  const p2PropResults = settled.p2PropResults || data.liveP2Props || null;
+  // goldenBoot — options live at pool/settled/goldenBoot/options, answer at pool/settled/goldenBoot/answer
+  // Fall back to pool/goldenBoot for migration
+  const settledGb = settled.goldenBoot || null;
+  const legacyGb = data.goldenBoot || null;
+  const goldenBoot = settledGb
+    ? { options: settledGb.options || legacyGb?.options || null, answer: settledGb.answer ?? legacyGb?.answer ?? null }
+    : legacyGb || null;
   return {
     players: data.players || [],
     predictions: data.predictions || {},
     paid: data.paid || {},
     settings: data.settings || { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] },
-    goldenBoot: data.goldenBoot || null,
+    goldenBoot,
     bracketSlots: data.bracketSlots || null,
-    liveP2Props,
+    p2PropResults,
     liveResults,
-    livePhase2,
+    bracketWinners,
   };
 }
 
@@ -430,9 +439,9 @@ function findKnockoutMatch(matchId) {
 // Resolve a bracket slot (1A, 2C, 3ABC, W_r32_1, L_sf_1, ...) to a team name (or null if unresolved).
 // - 1X/2X resolve directly from groupRankings[X][0]/[1] (1st/2nd place)
 // - 3xxx resolve from bracketSlots (best-3rd-place ranking — computed via API, not derivable client-side)
-// - W_matchId resolves from winnersMap[matchId] (falls back to livePhase2[matchId])
+// - W_matchId resolves from winnersMap[matchId] (falls back to bracketWinners[matchId])
 // - L_sf_X resolves to the non-winner of that SF match
-function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, livePhase2 }) {
+function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, bracketWinners }) {
   if (!slot) return null;
   if (/^[12][A-L]$/.test(slot)) {
     const pos = slot[0] === "1" ? 0 : 1;
@@ -444,16 +453,16 @@ function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, liv
   }
   if (slot.startsWith("W_")) {
     const matchId = slot.slice(2);
-    return (winnersMap && winnersMap[matchId]) || livePhase2?.[matchId] || null;
+    return (winnersMap && winnersMap[matchId]) || bracketWinners?.[matchId] || null;
   }
   if (slot.startsWith("L_")) {
     const matchId = slot.slice(2);
-    const winner = (winnersMap && winnersMap[matchId]) || livePhase2?.[matchId] || null;
+    const winner = (winnersMap && winnersMap[matchId]) || bracketWinners?.[matchId] || null;
     if (!winner) return null;
     const m = findKnockoutMatch(matchId);
     if (!m) return null;
-    const teamA = resolveBracketSlot(m.slotA, { groupRankings, bracketSlots, winnersMap, livePhase2 });
-    const teamB = resolveBracketSlot(m.slotB, { groupRankings, bracketSlots, winnersMap, livePhase2 });
+    const teamA = resolveBracketSlot(m.slotA, { groupRankings, bracketSlots, winnersMap, bracketWinners });
+    const teamB = resolveBracketSlot(m.slotB, { groupRankings, bracketSlots, winnersMap, bracketWinners });
     if (teamA && teamA !== winner) return teamA;
     if (teamB && teamB !== winner) return teamB;
     return null;
@@ -505,24 +514,24 @@ const P2_PROP_LOCKS = {
 function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round] || new Date("2099-01-01")); }
 function isP2RoundResultExpected(round) { const t = P2_PROP_LOCKS[round]; return t && new Date() >= new Date(t.getTime() + RESULT_GRACE_MS); }
 
-function calcPhase2Points(phase2Picks, livePhase2, liveP2Props, goldenBoot, p2PropPicks, goldenBootPick) {
+function calcPhase2Points(phase2Picks, bracketWinners, p2PropResults, goldenBoot, p2PropPicks, goldenBootPick) {
   let pts = 0;
   // Bracket points (includes third place)
-  if (phase2Picks && livePhase2) {
+  if (phase2Picks && bracketWinners) {
     Object.entries(ROUND_PTS).forEach(([round, roundPts]) => {
       const matches = KNOCKOUT_ROUNDS[round] || [];
       matches.forEach(match => {
         const pick = phase2Picks[match.id];
-        const actual = livePhase2?.[match.id];
+        const actual = bracketWinners?.[match.id];
         if (pick && actual && pick === actual) pts += roundPts;
       });
     });
   }
   // P2 prop points — picks stored in p2PropPicks, not phase2Picks
-  if (p2PropPicks && liveP2Props) {
+  if (p2PropPicks && p2PropResults) {
     P2_PROPS.forEach(prop => {
       const pick = p2PropPicks[prop.id];
-      const actual = liveP2Props?.[prop.id];
+      const actual = p2PropResults?.[prop.id];
       if (pick === null || pick === undefined || actual === null || actual === undefined) return;
       if (pick === actual) pts += actual ? prop.ptsYes : prop.ptsNo;
     });
@@ -1246,7 +1255,7 @@ function SparklineChart({ players, predictions, liveResults }) {
 }
 
 // ── HEAD-TO-HEAD MODAL ────────────────────────────────────────────────────────
-function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, liveP2Props, goldenBoot, phase, onClose }) {
+function H2HModal({ playerA, playerB, predictions, liveResults, bracketWinners, p2PropResults, goldenBoot, phase, onClose }) {
   const predA = predictions[playerA.id] || {};
   const predB = predictions[playerB.id] || {};
 
@@ -1268,20 +1277,20 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
   let p2Agree = 0, p2Disagree = 0, p2AWins = 0, p2BWins = 0;
   allP2Matches.forEach(m => {
     const pa = predA.phase2Picks?.[m.id], pb = predB.phase2Picks?.[m.id];
-    const actual = livePhase2?.[m.id];
+    const actual = bracketWinners?.[m.id];
     if (!pa || !pb) return;
     if (pa === pb) p2Agree++;
     else { p2Disagree++; if (actual) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
   });
   P2_PROPS.forEach(prop => {
     const pa = predA.p2PropPicks?.[prop.id], pb = predB.p2PropPicks?.[prop.id];
-    const actual = liveP2Props?.[prop.id];
+    const actual = p2PropResults?.[prop.id];
     if (pa == null || pb == null) return;
     if (pa === pb) p2Agree++;
     else { p2Disagree++; if (actual != null) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
   });
-  const pts2A = calcPhase2Points(predA.phase2Picks, livePhase2, liveP2Props, goldenBoot, predA.p2PropPicks, predA.goldenBootPick);
-  const pts2B = calcPhase2Points(predB.phase2Picks, livePhase2, liveP2Props, goldenBoot, predB.p2PropPicks, predB.goldenBootPick);
+  const pts2A = calcPhase2Points(predA.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predA.p2PropPicks, predA.goldenBootPick);
+  const pts2B = calcPhase2Points(predB.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predB.p2PropPicks, predB.goldenBootPick);
 
   const isP1 = phase === "p1";
   const displayPtsA = isP1 ? ptsA : pts2A;
@@ -1383,7 +1392,7 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
                 <div style={{ fontSize:10, color:"#9ab8a0", fontWeight:"bold", letterSpacing:1, marginBottom:4 }}>{roundLabel.toUpperCase()}</div>
                 {matches.map(m => {
                   const pa = predA.phase2Picks?.[m.id], pb = predB.phase2Picks?.[m.id];
-                  const actual = livePhase2?.[m.id];
+                  const actual = bracketWinners?.[m.id];
                   const same = pa && pb && pa === pb;
                   const diff = pa && pb && pa !== pb;
                   const pts = ROUND_PTS[round];
@@ -1404,7 +1413,7 @@ function H2HModal({ playerA, playerB, predictions, liveResults, livePhase2, live
           <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8, marginTop:14 }}>🎲 P2 PROPS</div>
           {P2_PROPS.map(prop => {
             const pa = predA.p2PropPicks?.[prop.id], pb = predB.p2PropPicks?.[prop.id];
-            const actual = liveP2Props?.[prop.id];
+            const actual = p2PropResults?.[prop.id];
             const settled = actual != null;
             const same = pa != null && pb != null && pa === pb;
             const diff = pa != null && pb != null && pa !== pb;
@@ -1546,7 +1555,7 @@ function BracketImportTree({ diff }) {
 // Scrollable horizontal bracket: R32 left → Final center → R32 right
 // 16 matches per side, converging inward round by round
 // Left side: matches 1-8, Right side: matches 9-16
-function VisualBracket({ phase2Picks, setPhase2Picks, livePhase2, bracketSlots, locked, open }) {
+function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlots, locked, open }) {
   const allTeams = Object.values(TEAMS_BY_GROUP).flat();
 
   const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
@@ -1555,7 +1564,7 @@ function VisualBracket({ phase2Picks, setPhase2Picks, livePhase2, bracketSlots, 
 
   // Get the team picked/won for a match (for propagation display)
   const getPickedTeam = (matchId) => phase2Picks[matchId] || null;
-  const getActualTeam = (matchId) => livePhase2?.[matchId] || null;
+  const getActualTeam = (matchId) => bracketWinners?.[matchId] || null;
   const getDisplayTeam = (matchId) => getActualTeam(matchId) || getPickedTeam(matchId);
 
   // Resolve a slot that might be W_xxx or L_xxx
@@ -1639,7 +1648,7 @@ function VisualBracket({ phase2Picks, setPhase2Picks, livePhase2, bracketSlots, 
       ? true : isResolved(rawSlotB);
 
     const pick = phase2Picks[match.id];
-    const actual = livePhase2?.[match.id];
+    const actual = bracketWinners?.[match.id];
     const won = actual && pick === actual;
     const lost = actual && pick && pick !== actual;
 
@@ -1738,7 +1747,7 @@ function VisualBracket({ phase2Picks, setPhase2Picks, livePhase2, bracketSlots, 
                 [finalMatch.slotB, finalSlotB],
               ].map(([rawSlot, team]) => {
                 const pick = phase2Picks[finalMatch.id];
-                const actual = livePhase2?.[finalMatch.id];
+                const actual = bracketWinners?.[finalMatch.id];
                 const isPick = pick === team;
                 const isActual = actual === team;
                 const resolved = team !== rawSlot;
@@ -1780,7 +1789,7 @@ function VisualBracket({ phase2Picks, setPhase2Picks, livePhase2, bracketSlots, 
                 [thirdMatch.slotB, thirdSlotB],
               ].map(([rawSlot, team]) => {
                 const pick = phase2Picks[thirdMatch.id];
-                const actual = livePhase2?.[thirdMatch.id];
+                const actual = bracketWinners?.[thirdMatch.id];
                 const isPick = pick === team;
                 const isActual = actual === team;
                 const resolved = team !== rawSlot;
@@ -1852,7 +1861,7 @@ export default function WorldCupPool() {
   const [p2PropPicks, setP2PropPicks]     = useState({}); // { [prop.id]: true|false }
   const [goldenBootPick, setGoldenBootPick] = useState(null);
   const [goldenBoot, setGoldenBoot]       = useState(null); // loaded from Firebase
-  const [liveP2Props, setLiveP2Props]     = useState(null);
+  const [p2PropResults, setLiveP2Props]     = useState(null);
   const [saved, setSaved]                 = useState(false);
   const [saving, setSaving]               = useState(false);
   const [viewingPlayer, setViewingPlayer] = useState(null);
@@ -1868,7 +1877,7 @@ export default function WorldCupPool() {
   const [editPayouts2, setEditPayouts2]   = useState(["60","25","10","5","0"]);
 
   const [liveResults, setLiveResults]     = useState(null);
-  const [livePhase2, setLivePhase2]       = useState(null);
+  const [bracketWinners, setLivePhase2]       = useState(null);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [sheetImport, setSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const [groupSheetImport, setGroupSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
@@ -1923,9 +1932,9 @@ export default function WorldCupPool() {
         setPaid(data.paid || {});
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
-        if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+        if (data.p2PropResults) setLiveP2Props(data.p2PropResults);
         if (data.liveResults) setLiveResults(data.liveResults);
-        if (data.livePhase2) setLivePhase2(data.livePhase2);
+        if (data.bracketWinners) setLivePhase2(data.bracketWinners);
         const def = { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] };
         const s = data.settings || def;
         setSettings(s);
@@ -1992,10 +2001,10 @@ export default function WorldCupPool() {
         setSettings(data.settings || { entryFee:25, commCut:20, p1Split:50, payouts1:[60,25,10,5,0], payouts2:[60,25,10,5,0] });
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
-        if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+        if (data.p2PropResults) setLiveP2Props(data.p2PropResults);
         if (data.liveResults) { setLiveResults(data.liveResults); setFetchStatus("done"); }
         else setFetchStatus("done");
-        if (data.livePhase2) setLivePhase2(data.livePhase2);
+        if (data.bracketWinners) setLivePhase2(data.bracketWinners);
       }).catch(() => {});
       loadMessages().then(setMessages).catch(() => {});
       loadReactions().then(setReactions).catch(() => {});
@@ -2150,8 +2159,8 @@ export default function WorldCupPool() {
     let count = 0;
     if (isGroupResultsExpected()) Object.keys(TEAMS_BY_GROUP).forEach(g => { if (!liveResults?.groupRankings?.[g]) count++; });
     DAILY_PROPS.forEach((_, i) => { if (isPropResultExpected(i) && (liveResults?.propResults?.[i] === null || liveResults?.propResults?.[i] === undefined)) count++; });
-    Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => { if (isP2RoundResultExpected(round)) matches.forEach(m => { if (!livePhase2?.[m.id]) count++; }); });
-    P2_PROPS.forEach(prop => { if (isP2RoundResultExpected(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) count++; });
+    Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => { if (isP2RoundResultExpected(round)) matches.forEach(m => { if (!bracketWinners?.[m.id]) count++; }); });
+    P2_PROPS.forEach(prop => { if (isP2RoundResultExpected(prop.round) && (p2PropResults?.[prop.id] === null || p2PropResults?.[prop.id] === undefined)) count++; });
     return count;
   })() : 0;
 
@@ -2159,7 +2168,7 @@ export default function WorldCupPool() {
     .map(p => ({
       ...p,
       pts: calcPoints(predictions[p.id], liveResults),
-      pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, livePhase2, liveP2Props, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick),
+      pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick),
       hasPred: !!predictions[p.id]
     }))
     .sort((a, b) => {
@@ -2382,7 +2391,7 @@ export default function WorldCupPool() {
 
       {/* H2H Modal */}
       {h2hPlayerA && h2hPlayerB && (
-        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} livePhase2={livePhase2} liveP2Props={liveP2Props} goldenBoot={goldenBoot} phase={lbPhase} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
+        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} bracketWinners={bracketWinners} p2PropResults={p2PropResults} goldenBoot={goldenBoot} phase={lbPhase} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
       )}
 
       {/* How It Works Modal */}
@@ -2586,8 +2595,8 @@ export default function WorldCupPool() {
                   setPredictions(data.predictions);
                   setPaid(data.paid || {});
                   if (data.liveResults) setLiveResults(data.liveResults);
-                  if (data.livePhase2) setLivePhase2(data.livePhase2);
-                  if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+                  if (data.bracketWinners) setLivePhase2(data.bracketWinners);
+                  if (data.p2PropResults) setLiveP2Props(data.p2PropResults);
                             setFetchStatus("done");
                   setLbLoading(false);
                 }).catch(() => { setLbLoading(false); });
@@ -2661,12 +2670,12 @@ export default function WorldCupPool() {
               Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
                 if (isP2PropRoundLocked(round)) {
                   bracketTotal += matches.length;
-                  matches.forEach(m => { if (livePhase2?.[m.id]) bracketDoneCount++; });
+                  matches.forEach(m => { if (bracketWinners?.[m.id]) bracketDoneCount++; });
                 }
               });
               // P2 props: count locked rounds
               const p2PropTotal = P2_PROPS.filter(p => isP2PropRoundLocked(p.round)).length;
-              const p2PropSettled = P2_PROPS.filter(p => isP2PropRoundLocked(p.round) && liveP2Props?.[p.id] !== null && liveP2Props?.[p.id] !== undefined).length;
+              const p2PropSettled = P2_PROPS.filter(p => isP2PropRoundLocked(p.round) && p2PropResults?.[p.id] !== null && p2PropResults?.[p.id] !== undefined).length;
               parts.push(`${bracketDoneCount >= bracketTotal && bracketTotal > 0 ? "✅" : bracketTotal === 0 ? "✅" : "⚠️"} Bracket ${bracketDoneCount}/${bracketTotal}`);
               parts.push(`${p2PropSettled >= p2PropTotal && p2PropTotal > 0 ? "✅" : p2PropTotal === 0 ? "✅" : "⚠️"} P2 Props ${p2PropSettled}/${p2PropTotal}`);
             }
@@ -3126,7 +3135,7 @@ export default function WorldCupPool() {
                 <VisualBracket
                   phase2Picks={phase2Picks}
                   setPhase2Picks={setPhase2Picks}
-                  livePhase2={livePhase2}
+                  bracketWinners={bracketWinners}
                   bracketSlots={bracketSlots}
                   locked={isPhase2Locked()}
                   open={isPhase2Open()}
@@ -3159,7 +3168,7 @@ export default function WorldCupPool() {
                       </div>
                       {roundProps.map(prop => {
                         const pick = p2PropPicks[prop.id];
-                        const actual = liveP2Props?.[prop.id];
+                        const actual = p2PropResults?.[prop.id];
                         const settled = actual !== null && actual !== undefined;
                         const won = settled && pick === actual;
                         const lost = settled && pick !== null && pick !== undefined && !won;
@@ -3491,14 +3500,14 @@ export default function WorldCupPool() {
               Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
                 if (isP2RoundResultExpected(round)) {
                   matches.forEach(m => {
-                    if (!livePhase2?.[m.id]) needsOverride.push({ phase:"p2", type:"bracket", label:`${ROUND_LABELS[round]}: ${m.label}`, key:"livePhase2_"+m.id });
+                    if (!bracketWinners?.[m.id]) needsOverride.push({ phase:"p2", type:"bracket", label:`${ROUND_LABELS[round]}: ${m.label}`, key:"bracketWinners_"+m.id });
                   });
                 }
               });
               // P2 props: round lock passed but result still null
               P2_PROPS.forEach(prop => {
-                if (isP2RoundResultExpected(prop.round) && (liveP2Props?.[prop.id] === null || liveP2Props?.[prop.id] === undefined)) {
-                  needsOverride.push({ phase:"p2", type:"prop", label:`${prop.round.toUpperCase()} — ${prop.q.substring(0,50)}…`, key:"liveP2Props_"+prop.id });
+                if (isP2RoundResultExpected(prop.round) && (p2PropResults?.[prop.id] === null || p2PropResults?.[prop.id] === undefined)) {
+                  needsOverride.push({ phase:"p2", type:"prop", label:`${prop.round.toUpperCase()} — ${prop.q.substring(0,50)}…`, key:"p2PropResults_"+prop.id });
                 }
               });
               const p1Needs = needsOverride.filter(x => x.phase==="p1");
@@ -3534,7 +3543,7 @@ export default function WorldCupPool() {
                 const bracketDetail = Object.entries(ROUND_PTS).flatMap(([round, roundPts]) =>
                   (KNOCKOUT_ROUNDS[round]||[]).map(match => {
                     const pick = pred.phase2Picks?.[match.id];
-                    const actual = livePhase2?.[match.id];
+                    const actual = bracketWinners?.[match.id];
                     const won = pick && actual && pick === actual;
                     if (won) bracketPts += roundPts;
                     return { match, round, roundPts, pick, actual, won };
@@ -3542,7 +3551,7 @@ export default function WorldCupPool() {
                 );
                 const propDetail = P2_PROPS.map(prop => {
                   const pick = pred.p2PropPicks?.[prop.id];
-                  const actual = liveP2Props?.[prop.id];
+                  const actual = p2PropResults?.[prop.id];
                   const settled = actual !== null && actual !== undefined;
                   const won = settled && pick === actual;
                   const pts = won ? (actual ? prop.ptsYes : prop.ptsNo) : 0;
@@ -3979,7 +3988,7 @@ export default function WorldCupPool() {
                                     const fresh = await dbLoad();
                                     const updated = { ...(fresh.goldenBoot||{}), answer: gbSheetImport.diff[0].to };
                                     setGoldenBoot(updated);
-                                    await dbPatch("goldenBoot", updated);
+                                    await settlePut("goldenBoot/answer", gbSheetImport.diff[0].to);
                                     setGbSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Set Golden Boot winner to ${gbSheetImport.diff[0].to}.` });
                                   } catch (e) {
                                     setGbSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -4035,7 +4044,7 @@ export default function WorldCupPool() {
                                     const fresh = await dbLoad();
                                     const updated = { ...(fresh.goldenBoot||{}), options: gbOptionsSheetImport.diff, answer: fresh.goldenBoot?.answer ?? null };
                                     setGoldenBoot(updated);
-                                    await dbPatch("goldenBoot", updated);
+                                    await settlePut("goldenBoot/options", gbOptionsSheetImport.diff);
                                     setGbOptionsSheetImport({ loading:false, error:"", diff:null, applying:false, done:"Options updated from sheet." });
                                   } catch (e) {
                                     setGbOptionsSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -4063,7 +4072,7 @@ export default function WorldCupPool() {
                                       (goldenBoot?.options || []).forEach((o,i) => { if (i<3) newOptions[i] = o; });
                                       newOptions[idx] = { name: editGbOptionVal.name.trim(), pts: parseInt(editGbOptionVal.pts,10) || 0 };
                                       const updated = { ...(goldenBoot||{}), options: newOptions, answer: goldenBoot?.answer ?? null };
-                                      setGoldenBoot(updated); await dbPatch("goldenBoot", updated);
+                                      setGoldenBoot(updated); await settlePut("goldenBoot/options", newOptions);
                                       setEditGbOption(null);
                                     }} style={{ ...S.btn, fontSize:10, padding:"2px 6px" }}>✓</button>
                                     <button onClick={() => setEditGbOption(null)} style={{ background:"transparent", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✕</button>
@@ -4094,7 +4103,7 @@ export default function WorldCupPool() {
                               <select onChange={async e => {
                                 if (!e.target.value) return;
                                 const updated = { ...goldenBoot, answer: e.target.value };
-                                setGoldenBoot(updated); await dbPatch("goldenBoot", updated);
+                                setGoldenBoot(updated); await settlePut("goldenBoot/answer", e.target.value);
                               }} value={goldenBoot.answer||""} style={{ ...S.input, fontSize:11, padding:"4px 8px" }}>
                                 <option value="">— not yet —</option>
                                 {[...goldenBoot.options, { name:"Other" }].map(o => <option key={o.name} value={o.name}>{o.name}</option>)}
@@ -4114,7 +4123,7 @@ export default function WorldCupPool() {
                               const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
                               const freshLiveResults = fresh.liveResults || {};
-                              const freshLivePhase2 = fresh.livePhase2 || {};
+                              const freshLivePhase2 = fresh.bracketWinners || {};
                               const freshBracketSlots = fresh.bracketSlots || null;
                               const groupRankings = freshLiveResults.groupRankings || {};
 
@@ -4127,7 +4136,7 @@ export default function WorldCupPool() {
                               const allRounds = ["r32","r16","qf","sf","third","final"];
                               allRounds.forEach(round => {
                                 (KNOCKOUT_ROUNDS[round] || []).forEach(match => {
-                                  const ctx = { groupRankings, bracketSlots: freshBracketSlots, winnersMap, livePhase2: freshLivePhase2 };
+                                  const ctx = { groupRankings, bracketSlots: freshBracketSlots, winnersMap, bracketWinners: freshLivePhase2 };
                                   const teamA = resolveBracketSlot(match.slotA, ctx);
                                   const teamB = resolveBracketSlot(match.slotB, ctx);
                                   const row = sheetRows[match.id];
@@ -4176,9 +4185,9 @@ export default function WorldCupPool() {
                                     setBracketSheetImport(s => ({ ...s, applying:true }));
                                     try {
                                       const applied = bracketSheetImport.diff.filter(d=>!d.error);
-                                      for (const d of applied) { await settlePut("livePhase2/"+d.matchId, d.to); }
+                                      for (const d of applied) { await settlePut("bracketWinners/"+d.matchId, d.to); }
                                       const fresh = await dbLoad();
-                                      setLivePhase2(fresh.livePhase2);
+                                      setLivePhase2(fresh.bracketWinners);
                                       setBracketSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${applied.length} update(s).` });
                                     } catch (e) {
                                       setBracketSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -4196,7 +4205,7 @@ export default function WorldCupPool() {
                             {matches.map(match => {
                               const teamA = bracketSlots?.[match.slotA] || match.slotA;
                               const teamB = bracketSlots?.[match.slotB] || match.slotB;
-                              const winner = livePhase2?.[match.id];
+                              const winner = bracketWinners?.[match.id];
                               return (
                                 <div key={match.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
                                   <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label}</span>
@@ -4206,8 +4215,8 @@ export default function WorldCupPool() {
                                       return (
                                         <button key={ti} onClick={async () => {
                                           const fresh = await dbLoad();
-                                          await settlePut("livePhase2/"+match.id, team);
-                                          setLivePhase2({ ...(fresh.livePhase2||{}), [match.id]: team });
+                                          await settlePut("bracketWinners/"+match.id, team);
+                                          setLivePhase2({ ...(fresh.bracketWinners||{}), [match.id]: team });
                                         }} style={{
                                           padding:"3px 8px", borderRadius:4, border:"1px solid", fontSize:10, cursor:"pointer",
                                           borderColor: active ? "#8fffb0" : "rgba(255,255,255,0.1)",
@@ -4233,7 +4242,7 @@ export default function WorldCupPool() {
                             try {
                               const sheet = await fetchScoresheet();
                               const fresh = await dbLoad();
-                              const freshLiveP2Props = fresh.liveP2Props || {};
+                              const freshLiveP2Props = fresh.p2PropResults || {};
                               const diff = [];
                               sheet.prop2.forEach(row => {
                                 const id = (row.id || "").trim();
@@ -4272,9 +4281,9 @@ export default function WorldCupPool() {
                                 <button disabled={p2PropSheetImport.applying} onClick={async () => {
                                   setP2PropSheetImport(s => ({ ...s, applying:true }));
                                   try {
-                                    for (const d of p2PropSheetImport.diff) { await settlePut("liveP2Props/"+d.id, d.to); }
+                                    for (const d of p2PropSheetImport.diff) { await settlePut("p2PropResults/"+d.id, d.to); }
                                     const fresh = await dbLoad();
-                                    setLiveP2Props(fresh.liveP2Props);
+                                    setLiveP2Props(fresh.p2PropResults);
                                     setP2PropSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${p2PropSheetImport.diff.length} update(s).` });
                                   } catch (e) {
                                     setP2PropSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -4285,7 +4294,7 @@ export default function WorldCupPool() {
                           </div>
                         )}
                         {P2_PROPS.map(prop => {
-                          const actual = liveP2Props?.[prop.id];
+                          const actual = p2PropResults?.[prop.id];
                           const settled = actual !== null && actual !== undefined;
                           return (
                             <div key={prop.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
@@ -4298,8 +4307,8 @@ export default function WorldCupPool() {
                                   return (
                                     <button key={label} onClick={async () => {
                                       const fresh = await dbLoad();
-                                      await settlePut("liveP2Props/"+prop.id, val);
-                                      setLiveP2Props({ ...(fresh.liveP2Props||{}), [prop.id]: val });
+                                      await settlePut("p2PropResults/"+prop.id, val);
+                                      setLiveP2Props({ ...(fresh.p2PropResults||{}), [prop.id]: val });
                                     }} style={{
                                       padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11, cursor:"pointer",
                                       borderColor: active ? (val===true?"#8fffb0":"#ff9090") : "rgba(255,255,255,0.1)",
@@ -4479,8 +4488,8 @@ export default function WorldCupPool() {
                   setPredictions(data.predictions);
                   setPaid(data.paid || {});
                   if (data.liveResults) setLiveResults(data.liveResults);
-                  if (data.livePhase2) setLivePhase2(data.livePhase2);
-                  if (data.liveP2Props) setLiveP2Props(data.liveP2Props);
+                  if (data.bracketWinners) setLivePhase2(data.bracketWinners);
+                  if (data.p2PropResults) setLiveP2Props(data.p2PropResults);
                             setFetchStatus("done");
                 } catch {}
                 setLbLoading(false);
@@ -4640,8 +4649,8 @@ export default function WorldCupPool() {
               const lb2 = [...leaderboard].sort((a, b) => {
                 if (b.pts2 !== a.pts2) return b.pts2 - a.pts2;
                 // Tiebreaker: closest to minute of first goal in the Final — only once Final is played
-                const finalFirstGoal = livePhase2?.finalFirstGoalMinute;
-                if (livePhase2?.final_1 && finalFirstGoal != null) {
+                const finalFirstGoal = bracketWinners?.finalFirstGoalMinute;
+                if (bracketWinners?.final_1 && finalFirstGoal != null) {
                   const tbA = predictions[a.id]?.tbP2, tbB = predictions[b.id]?.tbP2;
                   if (tbA != null && tbB != null) return Math.abs(tbA - finalFirstGoal) - Math.abs(tbB - finalFirstGoal);
                 }
@@ -4760,8 +4769,8 @@ export default function WorldCupPool() {
                     <div style={{ marginTop:16, borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:12 }}>
                       {[...leaderboard].sort((a, b) => {
                         if (b.pts2 !== a.pts2) return b.pts2 - a.pts2;
-                        const finalFirstGoal = livePhase2?.finalFirstGoalMinute;
-                        if (livePhase2?.final_1 && finalFirstGoal != null) {
+                        const finalFirstGoal = bracketWinners?.finalFirstGoalMinute;
+                        if (bracketWinners?.final_1 && finalFirstGoal != null) {
                           const tbA = predictions[a.id]?.tbP2, tbB = predictions[b.id]?.tbP2;
                           if (tbA != null && tbB != null) return Math.abs(tbA - finalFirstGoal) - Math.abs(tbB - finalFirstGoal);
                         }
