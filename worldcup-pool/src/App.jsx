@@ -48,7 +48,7 @@ async function dbLoad() {
     paid: data.paid || {},
     settings: data.settings || { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] },
     goldenBoot,
-    bracketSlots: data.bracketSlots || null,
+    bracketSlots: (settled.bracketSlots ? Object.assign({}, settled.bracketSlots) : null) || data.bracketSlots || null,
     p2PropResults,
     liveResults,
     bracketWinners,
@@ -370,26 +370,46 @@ const ROUND_PTS = { r32: 4, r16: 8, qf: 16, sf: 32, final: 64, third: 8 };
 // Knockout rounds structure — team slots filled from group results
 // Before group stage ends, slots show as "TBD (Group X Winner)" etc.
 const KNOCKOUT_ROUNDS = {
+  // R32: official FIFA bracket (Match 73–88)
+  // Left side of bracket: r32_1–r32_8 (M73–M80)
+  // Right side of bracket: r32_9–r32_16 (M81–M88)
   r32: [
-    { id:"r32_1",  label:"Match 1",  slotA:"1A", slotB:"2C" },
-    { id:"r32_2",  label:"Match 2",  slotA:"1C", slotB:"2A" },
-    { id:"r32_3",  label:"Match 3",  slotA:"1B", slotB:"2D" },
-    { id:"r32_4",  label:"Match 4",  slotA:"1D", slotB:"2B" },
-    { id:"r32_5",  label:"Match 5",  slotA:"1E", slotB:"2G" },
-    { id:"r32_6",  label:"Match 6",  slotA:"1G", slotB:"2E" },
-    { id:"r32_7",  label:"Match 7",  slotA:"1F", slotB:"2H" },
-    { id:"r32_8",  label:"Match 8",  slotA:"1H", slotB:"2F" },
-    { id:"r32_9",  label:"Match 9",  slotA:"1I", slotB:"2K" },
-    { id:"r32_10", label:"Match 10", slotA:"1K", slotB:"2I" },
-    { id:"r32_11", label:"Match 11", slotA:"1J", slotB:"2L" },
-    { id:"r32_12", label:"Match 12", slotA:"1L", slotB:"2J" },
-    { id:"r32_13", label:"Match 13", slotA:"3ABC", slotB:"3DEF" },
-    { id:"r32_14", label:"Match 14", slotA:"3GHI", slotB:"3JKL" },
-    { id:"r32_15", label:"Match 15", slotA:"3ABCD", slotB:"3EFGH" },
-    { id:"r32_16", label:"Match 16", slotA:"3IJKL", slotB:"3best" },
+    { id:"r32_1",  label:"M73",  slotA:"2A",      slotB:"2B"      }, // 2A vs 2B
+    { id:"r32_2",  label:"M74",  slotA:"1E",      slotB:"3ABCDF"  }, // 1E vs 3rd(A/B/C/D/F)
+    { id:"r32_3",  label:"M75",  slotA:"1F",      slotB:"2C"      }, // 1F vs 2C
+    { id:"r32_4",  label:"M76",  slotA:"1C",      slotB:"2F"      }, // 1C vs 2F
+    { id:"r32_5",  label:"M77",  slotA:"1I",      slotB:"3CDFGH"  }, // 1I vs 3rd(C/D/F/G/H)
+    { id:"r32_6",  label:"M78",  slotA:"2E",      slotB:"2I"      }, // 2E vs 2I
+    { id:"r32_7",  label:"M79",  slotA:"1A",      slotB:"3CEFHI"  }, // 1A vs 3rd(C/E/F/H/I)
+    { id:"r32_8",  label:"M80",  slotA:"1L",      slotB:"3EHIJK"  }, // 1L vs 3rd(E/H/I/J/K)
+    { id:"r32_9",  label:"M81",  slotA:"1D",      slotB:"3BEFIJ"  }, // 1D vs 3rd(B/E/F/I/J)
+    { id:"r32_10", label:"M82",  slotA:"1G",      slotB:"3AEHIJ"  }, // 1G vs 3rd(A/E/H/I/J)
+    { id:"r32_11", label:"M83",  slotA:"2K",      slotB:"2L"      }, // 2K vs 2L
+    { id:"r32_12", label:"M84",  slotA:"1H",      slotB:"2J"      }, // 1H vs 2J
+    { id:"r32_13", label:"M85",  slotA:"1B",      slotB:"3EFGIJ"  }, // 1B vs 3rd(E/F/G/I/J)
+    { id:"r32_14", label:"M86",  slotA:"1J",      slotB:"2H"      }, // 1J vs 2H
+    { id:"r32_15", label:"M87",  slotA:"1K",      slotB:"3DEIJL"  }, // 1K vs 3rd(D/E/I/J/L)
+    { id:"r32_16", label:"M88",  slotA:"2D",      slotB:"2G"      }, // 2D vs 2G
   ],
-  r16:   Array.from({length:8},  (_,i) => ({ id:`r16_${i+1}`,  label:`R16 Match ${i+1}`,  slotA:`W_r32_${i*2+1}`, slotB:`W_r32_${i*2+2}` })),
-  qf:    Array.from({length:4},  (_,i) => ({ id:`qf_${i+1}`,   label:`QF Match ${i+1}`,   slotA:`W_r16_${i*2+1}`, slotB:`W_r16_${i*2+2}` })),
+  // R16: official FIFA bracket (Match 89–96) — non-sequential R32 feed
+  r16: [
+    { id:"r16_1", label:"M89", slotA:"W_r32_2",  slotB:"W_r32_5"  }, // W74 vs W77
+    { id:"r16_2", label:"M90", slotA:"W_r32_1",  slotB:"W_r32_3"  }, // W73 vs W75
+    { id:"r16_3", label:"M91", slotA:"W_r32_4",  slotB:"W_r32_6"  }, // W76 vs W78
+    { id:"r16_4", label:"M92", slotA:"W_r32_7",  slotB:"W_r32_8"  }, // W79 vs W80
+    { id:"r16_5", label:"M93", slotA:"W_r32_11", slotB:"W_r32_12" }, // W83 vs W84
+    { id:"r16_6", label:"M94", slotA:"W_r32_9",  slotB:"W_r32_10" }, // W81 vs W82
+    { id:"r16_7", label:"M95", slotA:"W_r32_14", slotB:"W_r32_16" }, // W86 vs W88
+    { id:"r16_8", label:"M96", slotA:"W_r32_13", slotB:"W_r32_15" }, // W85 vs W87
+  ],
+  // QF: official FIFA bracket (Match 97–100) — non-sequential R16 feed
+  qf: [
+    { id:"qf_1", label:"M97",  slotA:"W_r16_1", slotB:"W_r16_2" }, // W89 vs W90
+    { id:"qf_2", label:"M98",  slotA:"W_r16_5", slotB:"W_r16_6" }, // W93 vs W94
+    { id:"qf_3", label:"M99",  slotA:"W_r16_3", slotB:"W_r16_4" }, // W91 vs W92
+    { id:"qf_4", label:"M100", slotA:"W_r16_7", slotB:"W_r16_8" }, // W95 vs W96
+  ],
+  // SF: W(qf_1 vs qf_2) and W(qf_3 vs qf_4)
   sf:    Array.from({length:2},  (_,i) => ({ id:`sf_${i+1}`,   label:`SF Match ${i+1}`,   slotA:`W_qf_${i*2+1}`,  slotB:`W_qf_${i*2+2}` })),
   third: [{ id:"third_1", label:"3rd Place", slotA:"L_sf_1", slotB:"L_sf_2" }],
   final: [{ id:"final_1", label:"Final", slotA:"W_sf_1", slotB:"W_sf_2" }],
@@ -400,17 +420,24 @@ const ROUND_LABELS = { r32:"Round of 32", r16:"Round of 16", qf:"Quarter-Finals"
 // Bracket tree — maps each match to which match its winner feeds into
 // Used to cascade-clear conflicting picks when a pick changes
 const BRACKET_FEED = {
-  // R32 winners feed into R16
-  r32_1:"r16_1", r32_2:"r16_1", r32_3:"r16_2", r32_4:"r16_2",
-  r32_5:"r16_3", r32_6:"r16_3", r32_7:"r16_4", r32_8:"r16_4",
-  r32_9:"r16_5", r32_10:"r16_5", r32_11:"r16_6", r32_12:"r16_6",
-  r32_13:"r16_7", r32_14:"r16_7", r32_15:"r16_8", r32_16:"r16_8",
-  // R16 winners feed into QF
-  r16_1:"qf_1", r16_2:"qf_1", r16_3:"qf_2", r16_4:"qf_2",
-  r16_5:"qf_3", r16_6:"qf_3", r16_7:"qf_4", r16_8:"qf_4",
-  // QF winners feed into SF
-  qf_1:"sf_1", qf_2:"sf_1", qf_3:"sf_2", qf_4:"sf_2",
-  // SF winners feed into Final; SF losers feed into 3rd place
+  // R32 → R16 (non-sequential per official bracket)
+  r32_1:"r16_2",  r32_2:"r16_1",   // M73→M90, M74→M89
+  r32_3:"r16_2",  r32_4:"r16_3",   // M75→M90, M76→M91
+  r32_5:"r16_1",  r32_6:"r16_3",   // M77→M89, M78→M91
+  r32_7:"r16_4",  r32_8:"r16_4",   // M79→M92, M80→M92
+  r32_9:"r16_6",  r32_10:"r16_6",  // M81→M94, M82→M94
+  r32_11:"r16_5", r32_12:"r16_5",  // M83→M93, M84→M93
+  r32_13:"r16_8", r32_14:"r16_7",  // M85→M96, M86→M95
+  r32_15:"r16_8", r32_16:"r16_7",  // M87→M96, M88→M95
+  // R16 → QF (non-sequential per official bracket)
+  r16_1:"qf_1", r16_2:"qf_1",  // M89,M90 → M97
+  r16_3:"qf_3", r16_4:"qf_3",  // M91,M92 → M99
+  r16_5:"qf_2", r16_6:"qf_2",  // M93,M94 → M98
+  r16_7:"qf_4", r16_8:"qf_4",  // M95,M96 → M100
+  // QF → SF
+  qf_1:"sf_1", qf_2:"sf_1",
+  qf_3:"sf_2", qf_4:"sf_2",
+  // SF → Final
   sf_1:"final_1", sf_2:"final_1",
 };
 
@@ -436,9 +463,9 @@ function findKnockoutMatch(matchId) {
   return null;
 }
 
-// Resolve a bracket slot (1A, 2C, 3ABC, W_r32_1, L_sf_1, ...) to a team name (or null if unresolved).
+// Resolve a bracket slot (1A, 2C, 3ABCDF, W_r32_1, L_sf_1, ...) to a team name (or null if unresolved).
 // - 1X/2X resolve directly from groupRankings[X][0]/[1] (1st/2nd place)
-// - 3xxx resolve from bracketSlots (best-3rd-place ranking — computed via API, not derivable client-side)
+// - 3xxx resolve from bracketSlots (best-3rd-place per FIFA draw combination — admin-entered, not derivable client-side)
 // - W_matchId resolves from winnersMap[matchId] (falls back to bracketWinners[matchId])
 // - L_sf_X resolves to the non-winner of that SF match
 function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, bracketWinners }) {
@@ -923,14 +950,14 @@ async function fetchBracketSlots() {
 Based on the final group standings, resolve these bracket slots to actual team names:
 - "1X" = 1st place team in Group X
 - "2X" = 2nd place team in Group X
-- "3ABC" = best 3rd-place team from Groups A, B, C (by FIFA criteria)
-- "3DEF" = best 3rd-place team from Groups D, E, F
-- "3GHI" = best 3rd-place team from Groups G, H, I
-- "3JKL" = best 3rd-place team from Groups J, K, L
-- "3ABCD" = best 3rd-place team from Groups A, B, C, D
-- "3EFGH" = best 3rd-place team from Groups E, F, G, H
-- "3IJKL" = best 3rd-place team from Groups I, J, K, L
-- "3best" = overall best 3rd-place team not already included
+- "3ABCDF" = best 3rd-place team from Groups A, B, C, D, F (feeds M74)
+- "3CDFGH" = best 3rd-place team from Groups C, D, F, G, H (feeds M77)
+- "3CEFHI" = best 3rd-place team from Groups C, E, F, H, I (feeds M79)
+- "3EHIJK" = best 3rd-place team from Groups E, H, I, J, K (feeds M80)
+- "3BEFIJ" = best 3rd-place team from Groups B, E, F, I, J (feeds M81)
+- "3AEHIJ" = best 3rd-place team from Groups A, E, H, I, J (feeds M82)
+- "3EFGIJ" = best 3rd-place team from Groups E, F, G, I, J (feeds M85)
+- "3DEIJL" = best 3rd-place team from Groups D, E, I, J, L (feeds M87)
 
 Return ONLY valid JSON, no markdown:
 {
@@ -959,14 +986,14 @@ Return ONLY valid JSON, no markdown:
     "2K": "team name or null",
     "1L": "team name or null",
     "2L": "team name or null",
-    "3ABC": "team name or null",
-    "3DEF": "team name or null",
-    "3GHI": "team name or null",
-    "3JKL": "team name or null",
-    "3ABCD": "team name or null",
-    "3EFGH": "team name or null",
-    "3IJKL": "team name or null",
-    "3best": "team name or null"
+    "3ABCDF": "team name or null",
+    "3CDFGH": "team name or null",
+    "3CEFHI": "team name or null",
+    "3EHIJK": "team name or null",
+    "3BEFIJ": "team name or null",
+    "3AEHIJ": "team name or null",
+    "3EFGIJ": "team name or null",
+    "3DEIJL": "team name or null"
   }
 }
 
@@ -3911,7 +3938,7 @@ export default function WorldCupPool() {
                                         style={{ ...S.input, width:100, padding:"2px 4px", fontSize:11 }} />
                                       <button onClick={async () => {
                                         const updated = { ...(bracketSlots||{}), [slot]: editBracketSlotVal };
-                                        setBracketSlots(updated); await dbPatch("bracketSlots", updated);
+                                        setBracketSlots(updated); await settlePut("bracketSlots/"+slot, editBracketSlotVal);
                                         setEditBracketSlot(null);
                                       }} style={{ ...S.btn, fontSize:10, padding:"2px 6px" }}>✓</button>
                                       <button onClick={() => setEditBracketSlot(null)} style={{ background:"transparent", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✕</button>
