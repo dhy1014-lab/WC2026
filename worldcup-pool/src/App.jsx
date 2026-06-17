@@ -28,8 +28,9 @@ async function dbLoad() {
     return legacyLR?.propResults || null;
   })();
   const groupRankings = settled.groupRankings || legacyLR?.groupRankings || null;
+  const groupFinal = settled.groupFinal || {};
   const liveResults = (propResults || groupRankings)
-    ? { propResults: propResults || Array(34).fill(null), groupRankings: groupRankings || {}, totalGoals: settled.totalGoals ?? legacyLR?.totalGoals ?? null }
+    ? { propResults: propResults || Array(34).fill(null), groupRankings: groupRankings || {}, groupFinal, totalGoals: settled.totalGoals ?? legacyLR?.totalGoals ?? null }
     : null;
   // bracketWinners — settled knockout match winners (legacy: data.livePhase2)
   const bracketWinners = settled.bracketWinners || data.livePhase2 || null;
@@ -616,10 +617,11 @@ function calcGroupRankingPoints(userRanking, actualRanking) {
   return pts;
 }
 
-function calcPoints(pred, live) {
+function calcPoints(pred, live, finalOnly) {
   if (!pred || !live) return 0;
   let pts = 0;
   Object.entries(pred.groupRankings || {}).forEach(([g, ranking]) => {
+    if (finalOnly && !live.groupFinal?.[g]) return;
     const actual = live.groupRankings?.[g];
     if (actual) pts += calcGroupRankingPoints(ranking, actual);
   });
@@ -755,313 +757,6 @@ async function fetchScoresheet() {
 function parseYesNo(val) {
   const v = (val || "").trim().toUpperCase();
   return v === "YES" ? true : v === "NO" ? false : null;
-}
-
-// ── CLAUDE API FOR LIVE RESULTS ───────────────────────────────────────────────
-async function fetchLiveResults() {
-  const propList = DAILY_PROPS.map((p, i) => `${i}: (${p.date}) "${p.q}" — true=yes, false=no, null=unresolved`).join("\n");
-  const prompt = `Search the web for the latest 2026 FIFA World Cup results (group stage June 11–27 2026).
-
-Return ONLY valid JSON, no markdown, no explanation:
-{
-  "groupRankings": {
-    "A": ["1st place team","2nd","3rd","4th"] or null if group not complete,
-    "B": null, "C": null, "D": null, "E": null, "F": null,
-    "G": null, "H": null, "I": null, "J": null, "K": null, "L": null
-  },
-  "propResults": [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null],
-  "totalGoals": null,
-  "matchday": "e.g. Group Stage Day 3",
-  "lastUpdated": "ISO timestamp"
-}
-
-- totalGoals: total goals scored across all 72 group stage matches once all 12 groups are fully complete, otherwise null.
-
-propResults is an array of 34 values (index 0–33), 2 props per day:
-${propList}
-
-Settlement guidance — how to research and settle each prop type:
-
-FINAL SCORES (win/loss/draw, goals scored, margin of victory): Look up the final score. Straightforward.
-
-CLEAN SHEETS: A team kept a clean sheet if they conceded 0 goals in the match. Check final score.
-
-FIRST-HALF GOALS (prop 2): Search for the half-time score or goal minutes. A goal is first-half if scored in minutes 1–45+stoppage. Return null if you cannot confirm goal timing.
-
-RED CARDS / YELLOW CARDS (props 5, 25): Search match events or match stats pages (ESPN, BBC Sport, Sofascore) for card incidents. Check ALL matches on that date for multi-match props. Return null if card data is unavailable, not false.
-
-PENALTIES GIVEN (prop 11): A penalty is "given" the moment the referee awards it, regardless of whether it is scored or missed. Search match events for "penalty" incidents in both specified matches. Return null if match event data is unavailable.
-
-GOAL TIMING — 81st minute or later (prop 18), 85th minute or later (prop 31): Search detailed match stats or match timeline for goal minutes. Injury-time goals (e.g. 90+2, 90+5) count. Check ALL matches on that date. Return null if you cannot confirm goal minutes — do NOT assume false just because you cannot find timing data.
-
-GOAL OR ASSIST by a named player (props 26, 27, 28, 32): Search match reports AND detailed match stats. Goals are listed in all reports. Assists may only appear in detailed stats pages (ESPN match recap, BBC Sport, Sofascore, WhoScored). Check both. Return null if you can confirm the player was on the pitch but cannot find assist data — do NOT return false just because assists aren't in the headline summary.
-
-GENERAL RULE: If a match has been played and you have confirmed results, settle the prop. If you cannot find specific data needed to settle a prop (e.g. goal minutes, assist data), return null rather than guessing false.
-
-Team names must exactly match:
-${Object.entries(TEAMS_BY_GROUP).map(([g,t])=>`Group ${g}: ${t.join(", ")}`).join("\n")}
-
-Return ONLY the JSON.`;
-
-  const res = await fetch("/api/scores", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 8000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || "API error");
-  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  const cleaned = raw.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  // If no JSON yet (tournament hasn't started), return empty results
-  if (s === -1) return {
-    groupRankings: { A:null,B:null,C:null,D:null,E:null,F:null,G:null,H:null,I:null,J:null,K:null,L:null },
-    propResults: Array(34).fill(null),
-    totalGoals: null,
-    matchday: "Tournament starts June 11",
-    lastUpdated: new Date().toISOString(),
-  };
-  try {
-    return JSON.parse(cleaned.slice(s, e + 1));
-  } catch {
-    // JSON was truncated (max_tokens hit mid-output) — return null so existing data is preserved
-    throw new Error("API response was truncated — try again");
-  }
-}
-
-// ── FETCH LIVE PHASE 2 RESULTS ───────────────────────────────────────────────
-// Fetches bracket winners + P2 prop results + P2 golden boot winner in one call
-async function fetchLivePhase2(bracketSlots) {
-  // Build match list with real team names when slots are resolved, otherwise slot codes
-  const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
-  const matchList = Object.entries(KNOCKOUT_ROUNDS).flatMap(([round, matches]) =>
-    matches.map(m => {
-      const teamA = resolveSlot(m.slotA);
-      const teamB = resolveSlot(m.slotB);
-      return `${m.id} (${ROUND_LABELS[round]}: ${teamA} vs ${teamB}): winner team name or null`;
-    })
-  ).join("\n");
-  const matchIds = Object.values(KNOCKOUT_ROUNDS).flat().map(m => `"${m.id}": null`).join(", ");
-
-  const propList = P2_PROPS.map(p => `"${p.id}": null  // ${p.q} — true=YES happened, false=NO, null=unresolved`).join("\n");
-
-  const prompt = `Search the web for 2026 FIFA World Cup knockout stage results (starting June 28 2026).
-
-Return ONLY valid JSON, no markdown:
-{
-  "knockoutWinners": { ${matchIds} },
-  "p2PropResults": {
-${propList}
-  },
-  "goldenBootWinner": null,
-  "finalFirstGoalMinute": null,
-  "lastUpdated": "ISO timestamp"
-}
-
-Rules:
-- knockoutWinners: set each match id to the winning team name (exact spelling from the tournament) or null if not yet played.
-- p2PropResults: set each prop id to true (YES happened), false (NO happened), or null (round not complete yet or data unavailable).
-  Only settle a prop once the relevant round is fully complete.
-  R32 props (p2_r32_*): settle after all 16 R32 matches played.
-  R16 props (p2_r16_*): settle after all 8 R16 matches played.
-  QF props (p2_qf_*): settle after all 4 QF matches played.
-  SF props (p2_sf_*): settle after both SF matches played.
-  Final props (p2_final_*): settle after the Final is played.
-- goldenBootWinner: the name of the tournament top scorer once the Final is played, or null.
-- finalFirstGoalMinute: the minute of the first goal in the Final (integer, e.g. 23 — use 90+ values for extra time, e.g. 113), or null if the Final has not been played.
-
-Settlement guidance — how to research and settle each prop type:
-
-REGULATION vs EXTRA TIME: Several props specify "in regulation". A match goes to ET if the score is level after 90 minutes. The regulation score is the score at 90 minutes, not after ET or penalties. If a match ends in ET or penalties, the regulation score was a draw. Always check whether a match went to ET before using the final score for regulation-only props.
-
-SINGLE-GOAL MARGIN IN REGULATION (p2_r32_a): A match is "decided by a single goal in regulation" if: (1) it did NOT go to ET or penalties, AND (2) the regulation final score differs by exactly 1 goal. If a match went to ET, it was NOT decided in regulation regardless of the ET result. Check all 16 R32 matches.
-
-TOP-10 FIFA-RANKED TEAM ELIMINATED (p2_r32_b): Use the FIFA rankings from November 2025 (the seeding snapshot used for the tournament draw). The top 10 teams by those rankings are widely published. A team is "eliminated" if they lost in the R32 and are out of the tournament. Cross-reference R32 results with the November 2025 FIFA top 10. Return null if you cannot confirm the rankings.
-
-HAT-TRICKS (p2_r32_c): A hat-trick is 3 or more goals by one player in a single match. These are prominently reported. Check all R32 matches.
-
-MATCH-DECIDING GOAL IN 90+ STOPPAGE TIME (p2_r16_a): This requires ALL of: (1) the goal was scored in stoppage time of regulation (minute 90+1 or later, NOT in ET), AND (2) the match did NOT go to ET or penalties (it was decided in regulation), AND (3) the goal changed the scoreline to make one team the winner (not a consolation or dead-rubber goal — e.g. making it 2-1 when it was 1-1, but not 3-0 when it was already 2-0). Search detailed match timelines. Return null if you cannot confirm all three conditions.
-
-CONFEDERATION CHECK (p2_r16_c): Non-European, non-South-American confederations are: CONCACAF (USA, Canada, Mexico, Curaçao, Haiti, Panama), CAF (African teams), AFC (Asian teams), OFC (New Zealand). A team wins "in regulation" if the match did not go to ET or penalties.
-
-RED CARDS (p2_qf_b, p2_final_b): Search match events pages for red card incidents. These are prominently reported for high-profile matches. Return null only if match event data is completely unavailable.
-
-QF WIN BY 2+ GOALS IN REGULATION (p2_qf_c): Check regulation score only. If a match went to ET, the regulation score was a draw (0 goal margin in regulation) — count as false for this prop. Return null if unsure whether ET was played.
-
-3+ GOALS IN REGULATION IN A SF (p2_sf_a): Use regulation score only. If the match went to ET, only count goals scored in minutes 1–90 (including stoppage time of 90 mins).
-
-COMEBACK WIN (p2_sf_b): A "comeback" means a team fell behind (conceded the first goal and were trailing) and then went on to win the match in regulation or ET. This requires knowing the scoring sequence. Search match reports and timelines for "comeback", "came from behind", or the order goals were scored. Return null if scoring sequence is not available — do NOT guess based on final score alone. A team winning 3-1 may not have come from behind.
-
-OWN GOALS (p2_sf_c): Own goals are listed in goalscorer data — typically shown as "OG" or "own goal" next to the scoring team. Check match reports for both SFs.
-
-FINAL FIRST GOAL MINUTE (finalFirstGoalMinute): Search for "first goal" minute in the Final. Return the integer minute (e.g. 34 for a 34th-minute goal, 113 for a 113th-minute goal in ET). Return null if the Final has not been played.
-
-GENERAL RULE: Return null rather than guessing when specific data (goal minutes, scoring sequence, shot location, assist attribution) is not clearly available from web sources.
-
-Match list:
-${matchList}
-
-Return ONLY the JSON.`;
-
-  const res = await fetch("/api/scores", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 8000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || "API error");
-  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  const cleaned = raw.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  if (s === -1) return null;
-  try {
-    const parsed = JSON.parse(cleaned.slice(s, e + 1));
-    return {
-      knockoutWinners: parsed.knockoutWinners || null,
-      p2PropResults: parsed.p2PropResults || null,
-      goldenBootWinner: parsed.goldenBootWinner || null,
-      finalFirstGoalMinute: parsed.finalFirstGoalMinute ?? null,
-    };
-  } catch {
-    throw new Error("API response was truncated — try again");
-  }
-}
-
-// ── FETCH BRACKET SLOTS (one-time after group stage ends) ─────────────────────
-// Resolves A1/A2/B1/etc. placeholders to actual team names from group results
-// Persists to Firebase pool.bracketSlots — never re-fetches if already set
-async function fetchBracketSlots() {
-  const slotList = Object.values(KNOCKOUT_ROUNDS.r32).map(m =>
-    `"${m.slotA}": null, "${m.slotB}": null`
-  ).join(", ");
-
-  const prompt = `Search the web for the 2026 FIFA World Cup group stage final standings (all 12 groups A–L, June 11–27 2026).
-
-Based on the final group standings, resolve these bracket slots to actual team names:
-- "1X" = 1st place team in Group X
-- "2X" = 2nd place team in Group X
-- "3ABCDF" = best 3rd-place team from Groups A, B, C, D, F (feeds M74)
-- "3CDFGH" = best 3rd-place team from Groups C, D, F, G, H (feeds M77)
-- "3CEFHI" = best 3rd-place team from Groups C, E, F, H, I (feeds M79)
-- "3EHIJK" = best 3rd-place team from Groups E, H, I, J, K (feeds M80)
-- "3BEFIJ" = best 3rd-place team from Groups B, E, F, I, J (feeds M81)
-- "3AEHIJ" = best 3rd-place team from Groups A, E, H, I, J (feeds M82)
-- "3EFGIJ" = best 3rd-place team from Groups E, F, G, I, J (feeds M85)
-- "3DEIJL" = best 3rd-place team from Groups D, E, I, J, L (feeds M87)
-
-Return ONLY valid JSON, no markdown:
-{
-  "slots": {
-    "1A": "team name or null",
-    "2A": "team name or null",
-    "1B": "team name or null",
-    "2B": "team name or null",
-    "1C": "team name or null",
-    "2C": "team name or null",
-    "1D": "team name or null",
-    "2D": "team name or null",
-    "1E": "team name or null",
-    "2E": "team name or null",
-    "1F": "team name or null",
-    "2F": "team name or null",
-    "1G": "team name or null",
-    "2G": "team name or null",
-    "1H": "team name or null",
-    "2H": "team name or null",
-    "1I": "team name or null",
-    "2I": "team name or null",
-    "1J": "team name or null",
-    "2J": "team name or null",
-    "1K": "team name or null",
-    "2K": "team name or null",
-    "1L": "team name or null",
-    "2L": "team name or null",
-    "3ABCDF": "team name or null",
-    "3CDFGH": "team name or null",
-    "3CEFHI": "team name or null",
-    "3EHIJK": "team name or null",
-    "3BEFIJ": "team name or null",
-    "3AEHIJ": "team name or null",
-    "3EFGIJ": "team name or null",
-    "3DEIJL": "team name or null"
-  }
-}
-
-Use exact team names from the tournament. Return null for any slot where the group hasn't finished.
-Return ONLY the JSON.`;
-
-  const res = await fetch("/api/scores", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  const cleaned = raw.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  if (s === -1) return null;
-  const parsed = JSON.parse(cleaned.slice(s, e + 1));
-  return parsed.slots || null;
-}
-
-// ── FETCH GOLDEN BOOT OPTIONS (one-time after group stage ends) ───────────────
-// Gets top 3 group-stage scorers + sets weighted point values
-// Persists to Firebase pool.goldenBoot — never re-fetches if already set
-async function fetchGoldenBootOptions() {
-  const prompt = `Search the web for the 2026 FIFA World Cup group stage top scorers (June 11–27 2026).
-
-Find the top 3 players by goals scored in the group stage (not counting penalty shootout goals).
-Then assign point values for a betting pool Golden Boot prop (max 20 pts for "Other"):
-- The player most likely to win the Golden Boot (highest goals, best team progression) gets the lowest points (bigger favorite = lower payout).
-- Weight the points based on the gap between scorers — if one player is far ahead, they're a heavy favorite and should pay much less.
-- Points must be whole numbers between 5 and 18.
-- "Other" always pays 20 pts.
-
-Return ONLY valid JSON, no markdown:
-{
-  "options": [
-    { "name": "Player 1 full name", "goals": 5, "team": "Team", "pts": 6 },
-    { "name": "Player 2 full name", "goals": 4, "team": "Team", "pts": 10 },
-    { "name": "Player 3 full name", "goals": 3, "team": "Team", "pts": 15 }
-  ],
-  "reasoning": "brief explanation of weighting"
-}
-
-Return ONLY the JSON.`;
-
-  const res = await fetch("/api/scores", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 600,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  const raw = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-  const cleaned = raw.replace(/```json|```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  if (s === -1) return null;
-  const parsed = JSON.parse(cleaned.slice(s, e + 1));
-  if (!parsed.options || parsed.options.length < 3) return null;
-  return { options: parsed.options.slice(0, 3), answer: null };
 }
 
 // ── MATCH TICKER (live + upcoming) ───────────────────────────────────────────
@@ -1922,6 +1617,8 @@ export default function WorldCupPool() {
   const [editingGroupVal, setEditingGroupVal] = useState("");
   const [editBracketSlot, setEditBracketSlot] = useState(null);
   const [editBracketSlotVal, setEditBracketSlotVal] = useState("");
+  const [tbAnswerP1Input, setTbAnswerP1Input] = useState(""); // admin entry: actual total group-stage goals
+  const [tbAnswerP2Input, setTbAnswerP2Input] = useState(""); // admin entry: actual minute of first goal in the Final
   const [bracketSlots, setBracketSlots]   = useState(null); // { "1A": "Mexico", "2A": "South Africa", ... }
   const [fetchStatus, setFetchStatus]     = useState("idle");
   const [fetchError, setFetchError]       = useState("");
@@ -1938,6 +1635,7 @@ export default function WorldCupPool() {
   const [h2hPlayerA, setH2hPlayerA]       = useState(null);
   const [h2hPlayerB, setH2hPlayerB]       = useState(null);
   const [lbTab, setLbTab]                 = useState("standings");
+  const [groupFinalOnly, setGroupFinalOnly] = useState(true); // Standings toggle: true = exclude provisional groups
   const [lbPhase, setLbPhase]             = useState("p1"); // "p1" | "p2"
   const [adminPinMsg, setAdminPinMsg]     = useState("");
   const [prevPropResults, setPrevPropResults] = useState(null);
@@ -2191,23 +1889,31 @@ export default function WorldCupPool() {
     return count;
   })() : 0;
 
-  const leaderboard = players
-    .map(p => ({
-      ...p,
-      pts: calcPoints(predictions[p.id], liveResults),
-      pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick),
-      hasPred: !!predictions[p.id]
-    }))
-    .sort((a, b) => {
-      if (b.pts !== a.pts) return b.pts - a.pts;
-      // Tiebreaker: closest to total group stage goals — only once group stage is final and answer is known
-      const totalGoals = liveResults?.totalGoals;
-      if (isGroupStageComplete() && totalGoals != null) {
-        const tbA = predictions[a.id]?.tbP1, tbB = predictions[b.id]?.tbP1;
-        if (tbA != null && tbB != null) return Math.abs(tbA - totalGoals) - Math.abs(tbB - totalGoals);
-      }
-      return 0;
-    });
+  // buildP1Leaderboard(finalOnly) — finalOnly=true excludes group-ranking points for any
+  // group not yet marked Final by the admin (pool/settled/groupFinal/{g}). Used by the
+  // Standings tab toggle; every other consumer (chart, H2H, home widget, CSV export) keeps
+  // using the default (finalOnly=false, i.e. include provisional) leaderboard below.
+  function buildP1Leaderboard(finalOnly) {
+    return players
+      .map(p => ({
+        ...p,
+        pts: calcPoints(predictions[p.id], liveResults, finalOnly),
+        pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick),
+        hasPred: !!predictions[p.id]
+      }))
+      .sort((a, b) => {
+        if (b.pts !== a.pts) return b.pts - a.pts;
+        // Tiebreaker: closest to total group stage goals — only once group stage is final and answer is known
+        const totalGoals = liveResults?.totalGoals;
+        if (isGroupStageComplete() && totalGoals != null) {
+          const tbA = predictions[a.id]?.tbP1, tbB = predictions[b.id]?.tbP1;
+          if (tbA != null && tbB != null) return Math.abs(tbA - totalGoals) - Math.abs(tbB - totalGoals);
+        }
+        return 0;
+      });
+  }
+  const leaderboard = buildP1Leaderboard(false);
+  const leaderboardFinalOnly = buildP1Leaderboard(true);
 
   // selPropIdx retained for potential future use
 
@@ -3523,6 +3229,10 @@ export default function WorldCupPool() {
                   needsOverride.push({ phase:"p1", type:"prop", label:`${prop.date} — ${prop.q.substring(0,50)}…`, key:"propResults_"+i });
                 }
               });
+              // P1 tiebreaker: group stage complete but actual total goals still null
+              if (isGroupResultsExpected() && (liveResults?.totalGoals === null || liveResults?.totalGoals === undefined)) {
+                needsOverride.push({ phase:"p1", type:"tiebreaker", label:"P1 tiebreaker — total group stage goals", key:"totalGoals" });
+              }
               // P2 bracket: round lock passed but match winner still null
               Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
                 if (isP2RoundResultExpected(round)) {
@@ -3537,6 +3247,10 @@ export default function WorldCupPool() {
                   needsOverride.push({ phase:"p2", type:"prop", label:`${prop.round.toUpperCase()} — ${prop.q.substring(0,50)}…`, key:"p2PropResults_"+prop.id });
                 }
               });
+              // P2 tiebreaker: Final lock passed but actual first-goal minute still null
+              if (isP2RoundResultExpected("final") && (bracketWinners?.finalFirstGoalMinute === null || bracketWinners?.finalFirstGoalMinute === undefined)) {
+                needsOverride.push({ phase:"p2", type:"tiebreaker", label:"P2 tiebreaker — minute of first goal in the Final", key:"finalFirstGoalMinute" });
+              }
               const p1Needs = needsOverride.filter(x => x.phase==="p1");
               const p2Needs = needsOverride.filter(x => x.phase==="p2");
 
@@ -3714,11 +3428,20 @@ export default function WorldCupPool() {
                           {Object.keys(TEAMS_BY_GROUP).map(g => {
                             const actual = liveResults?.groupRankings?.[g] || [null,null,null,null];
                             const teams = TEAMS_BY_GROUP[g];
+                            const isFinal = !!liveResults?.groupFinal?.[g];
                             return (
                               <div key={g} style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"8px 10px" }}>
-                                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
-                                  GROUP {g}
-
+                                <div style={{ fontSize:10, color:"#f0d060", fontWeight:"bold", marginBottom:6, display:"flex", alignItems:"center", justifyContent:"space-between", gap:4 }}>
+                                  <span>GROUP {g}</span>
+                                  <button onClick={async () => {
+                                    const fresh = await dbLoad();
+                                    const freshLR = fresh.liveResults || {};
+                                    const newVal = !(freshLR.groupFinal?.[g]);
+                                    await settlePut("groupFinal/"+g, newVal);
+                                    setLiveResults({ ...freshLR, groupFinal: { ...(freshLR.groupFinal||{}), [g]: newVal } });
+                                  }} style={{ fontSize:9, fontWeight:"normal", padding:"2px 7px", borderRadius:10, border:"1px solid", cursor:"pointer", borderColor: isFinal ? "rgba(140,255,176,0.5)" : "rgba(255,255,255,0.15)", background: isFinal ? "rgba(140,255,176,0.15)" : "rgba(255,255,255,0.04)", color: isFinal ? "#8fffb0" : "#9ab8a0" }}>
+                                    {isFinal ? "✅ Final" : "📊 Provisional"}
+                                  </button>
                                 </div>
                                 {[0,1,2,3].map(idx => {
                                   const isEditing = editingGroup?.g === g && editingGroup?.idx === idx;
@@ -3757,6 +3480,26 @@ export default function WorldCupPool() {
                               </div>
                             );
                           })}
+                        </div>
+                      </div>
+
+                      {/* P1 Tiebreaker */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1 }}>🔢 P1 TIEBREAKER — total group stage goals</div>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                          <input type="number" value={tbAnswerP1Input} onChange={e => setTbAnswerP1Input(e.target.value)}
+                            placeholder={liveResults?.totalGoals != null ? String(liveResults.totalGoals) : "e.g. 158"}
+                            style={{ ...S.input, width:100, fontSize:12, padding:"4px 8px" }} />
+                          <button onClick={async () => {
+                            const val = tbAnswerP1Input !== "" ? parseInt(tbAnswerP1Input, 10) : null;
+                            if (val === null || Number.isNaN(val)) return;
+                            const fresh = await dbLoad();
+                            const freshLR = fresh.liveResults || {};
+                            await settlePut("totalGoals", val);
+                            setLiveResults({ ...freshLR, totalGoals: val });
+                            setTbAnswerP1Input("");
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 12px" }}>Save</button>
+                          {liveResults?.totalGoals != null && <span style={{ fontSize:12, color:"#8fffb0", fontWeight:"bold" }}>✓ currently set: {liveResults.totalGoals} goals</span>}
                         </div>
                       </div>
 
@@ -4260,6 +4003,25 @@ export default function WorldCupPool() {
                         ))}
                       </div>
 
+                      {/* P2 Tiebreaker */}
+                      <div style={S.card}>
+                        <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1 }}>🔢 P2 TIEBREAKER — minute of first goal in the Final</div>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                          <input type="number" value={tbAnswerP2Input} onChange={e => setTbAnswerP2Input(e.target.value)}
+                            placeholder={bracketWinners?.finalFirstGoalMinute != null ? String(bracketWinners.finalFirstGoalMinute) : "e.g. 34"}
+                            style={{ ...S.input, width:100, fontSize:12, padding:"4px 8px" }} />
+                          <button onClick={async () => {
+                            const val = tbAnswerP2Input !== "" ? parseInt(tbAnswerP2Input, 10) : null;
+                            if (val === null || Number.isNaN(val)) return;
+                            const fresh = await dbLoad();
+                            await settlePut("bracketWinners/finalFirstGoalMinute", val);
+                            setLivePhase2({ ...(fresh.bracketWinners||{}), finalFirstGoalMinute: val });
+                            setTbAnswerP2Input("");
+                          }} style={{ ...S.btn, fontSize:11, padding:"4px 12px" }}>Save</button>
+                          {bracketWinners?.finalFirstGoalMinute != null && <span style={{ fontSize:12, color:"#8fffb0", fontWeight:"bold" }}>✓ currently set: {bracketWinners.finalFirstGoalMinute}'</span>}
+                        </div>
+                      </div>
+
                       {/* P2 Prop Results */}
                       <div style={S.card}>
                         <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:8, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
@@ -4547,12 +4309,15 @@ export default function WorldCupPool() {
 
             {/* ── P1 STANDINGS ── */}
             {lbPhase==="p1" && lbTab==="standings" && (() => {
+              const lbActive = groupFinalOnly ? leaderboardFinalOnly : leaderboard;
               const { pot1, pot2, total, commCut, paidCount } = calcPot(players, paid, settings);
               const entryFee = settings.entryFee || 25;
-              const prizes1 = calcPrizes(leaderboard, paid, pot1, entryFee, settings.payouts1);
+              const prizes1 = calcPrizes(lbActive, paid, pot1, entryFee, settings.payouts1);
               const refund1 = entryFee;
               const dist1 = Math.max(0, pot1 - refund1);
               const pcts1 = settings.payouts1 || [60,25,10,5,0];
+              const totalGroups = Object.keys(TEAMS_BY_GROUP).length;
+              const finalGroupCount = Object.values(liveResults?.groupFinal || {}).filter(Boolean).length;
               return (
                 <div>
                   <div style={{ ...S.card, borderColor:"rgba(100,200,100,0.3)", background:"rgba(0,100,40,0.1)", marginBottom:14 }}>
@@ -4567,18 +4332,29 @@ export default function WorldCupPool() {
                       )}
                     </div>
                   </div>
-                  {!isGroupStageComplete() && liveResults?.groupRankings && (
+                  {finalGroupCount < totalGroups && (
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:10, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:11, color:"#9ab8a0" }}>{finalGroupCount}/{totalGroups} groups final</span>
+                      <div style={{ display:"flex", gap:4 }}>
+                        <button onClick={() => setGroupFinalOnly(true)} style={{ fontSize:10, padding:"4px 10px", borderRadius:6, border:"1px solid", cursor:"pointer", borderColor: groupFinalOnly ? "rgba(140,255,176,0.5)" : "rgba(255,255,255,0.12)", background: groupFinalOnly ? "rgba(140,255,176,0.15)" : "rgba(255,255,255,0.04)", color: groupFinalOnly ? "#8fffb0" : "#9ab8a0", fontWeight: groupFinalOnly ? "bold" : "normal" }}>✅ Final only</button>
+                        <button onClick={() => setGroupFinalOnly(false)} style={{ fontSize:10, padding:"4px 10px", borderRadius:6, border:"1px solid", cursor:"pointer", borderColor: !groupFinalOnly ? "rgba(240,208,96,0.5)" : "rgba(255,255,255,0.12)", background: !groupFinalOnly ? "rgba(240,208,96,0.15)" : "rgba(255,255,255,0.04)", color: !groupFinalOnly ? "#f0d060" : "#9ab8a0", fontWeight: !groupFinalOnly ? "bold" : "normal" }}>📊 Incl. provisional</button>
+                      </div>
+                    </div>
+                  )}
+                  {finalGroupCount < totalGroups && (
                     <div style={{ background:"rgba(255,200,50,0.1)", border:"1px solid rgba(255,200,50,0.25)", borderRadius:6, padding:"7px 12px", fontSize:11, color:"#f0d060", marginBottom:10 }}>
-                      📊 Group pts are projected — group stage final standings lock Jun 27
+                      {groupFinalOnly
+                        ? `📊 Showing points for ${finalGroupCount} finalized group${finalGroupCount===1?"":"s"} only — ${totalGroups-finalGroupCount} group${totalGroups-finalGroupCount===1?"":"s"} still provisional and excluded`
+                        : `📊 Including provisional points for ${totalGroups-finalGroupCount} group${totalGroups-finalGroupCount===1?"":"s"} not yet marked final`}
                     </div>
                   )}
                   {lbLoading && <div style={{ color:"#9ab8a0", textAlign:"center", padding:20 }}>⏳ Loading…</div>}
-                  {!lbLoading && leaderboard.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
-                  {!lbLoading && leaderboard.map((p, i) => {
+                  {!lbLoading && lbActive.length===0 && <div style={{ color:"#9ab8a0" }}>No players yet.</div>}
+                  {!lbLoading && lbActive.map((p, i) => {
                     const pred = predictions[p.id];
                     const grpDone = pred ? Object.keys(pred.groupRankings||{}).length : 0;
                     const prpDone = pred ? (pred.propPicks||[]).filter(x=>x!==null).length : 0;
-                    const isLastPaid = leaderboard.filter(x=>paid[x.id]).at(-1)?.id === p.id && paid[p.id];
+                    const isLastPaid = lbActive.filter(x=>paid[x.id]).at(-1)?.id === p.id && paid[p.id];
                     return (
                       <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, background:i===0?"rgba(200,168,75,0.15)":"rgba(255,255,255,0.04)", borderRadius:8, padding:"12px 14px", marginBottom:8, border:`1px solid ${i===0?"rgba(200,168,75,0.4)":"rgba(255,255,255,0.06)"}` }}>
                         <div style={{ fontSize:20, minWidth:28, textAlign:"center" }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i===3?"4️⃣":i===4?"5️⃣":`#${i+1}`}</div>
@@ -4625,6 +4401,7 @@ export default function WorldCupPool() {
                             const pred = predictions[p.id] || {};
                             let gPts = 0;
                             Object.entries(pred.groupRankings || {}).forEach(([g, ranking]) => {
+                              if (groupFinalOnly && !liveResults?.groupFinal?.[g]) return;
                               const actual = liveResults?.groupRankings?.[g];
                               if (actual) gPts += calcGroupRankingPoints(ranking, actual);
                             });
@@ -4634,7 +4411,7 @@ export default function WorldCupPool() {
                               if (actual === null || actual === undefined) return;
                               if (pick === actual) pPts += actual ? DAILY_PROPS[idx].ptsYes : DAILY_PROPS[idx].ptsNo;
                             });
-                            const grpFlux = !isGroupStageComplete();
+                            const grpFlux = !groupFinalOnly && !isGroupStageComplete();
                             return (
                               <table style={{ borderCollapse:"collapse", marginLeft:"auto", fontSize:11 }}>
                                 <tbody>
@@ -4856,7 +4633,6 @@ export default function WorldCupPool() {
                 <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10, textAlign:"center" }}>The comparison panel opens as a full overlay once both are selected.</div>
               </div>
             )}
-            )}
 
             {/* ── RESULTS TAB ── */}
             {lbTab==="results" && (() => {
@@ -4871,13 +4647,21 @@ export default function WorldCupPool() {
                   {/* GROUP RESULTS */}
                   <div style={{ marginBottom:18 }}>
                     <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>
-                      🏆 GROUP STANDINGS {!isGroupStageComplete() && <span style={{ color:"rgba(240,208,96,0.5)", fontWeight:"normal", fontStyle:"italic" }}>— provisional</span>}
+                      🏆 GROUP STANDINGS
                     </div>
                     {Object.keys(TEAMS_BY_GROUP).map(g => {
                       const ranking = liveResults?.groupRankings?.[g];
+                      const isFinal = !!liveResults?.groupFinal?.[g];
                       return (
                         <div key={g} style={{ marginBottom:6, background:"rgba(255,255,255,0.03)", borderRadius:6, padding:"8px 10px", border:"1px solid rgba(255,255,255,0.07)" }}>
-                          <div style={{ fontSize:10, fontWeight:"bold", color:"#f0d060", marginBottom:5, letterSpacing:1 }}>GROUP {g}</div>
+                          <div style={{ fontSize:10, fontWeight:"bold", color:"#f0d060", marginBottom:5, letterSpacing:1, display:"flex", alignItems:"center", justifyContent:"space-between", gap:4 }}>
+                            <span>GROUP {g}</span>
+                            {ranking && (
+                              <span style={{ fontSize:8, fontWeight:"normal", letterSpacing:0, color: isFinal ? "#8fffb0" : "rgba(240,208,96,0.6)", fontStyle: isFinal ? "normal" : "italic" }}>
+                                {isFinal ? "✅ final" : "📊 provisional"}
+                              </span>
+                            )}
+                          </div>
                           {ranking ? (
                             <div>
                               {ranking.map((team, pos) => (
