@@ -372,34 +372,40 @@ const ROUND_PTS = { r32: 4, r16: 8, qf: 16, sf: 32, final: 64, third: 8 };
 // Before group stage ends, slots show as "TBD (Group X Winner)" etc.
 const KNOCKOUT_ROUNDS = {
   // R32: official FIFA bracket (Match 73–88)
-  // Left side of bracket: r32_1–r32_8 (M73–M80)
-  // Right side of bracket: r32_9–r32_16 (M81–M88)
+  // Array order below = true visual bracket lane (verified against FIFA's published
+  // R16/QF/SF feed, e.g. M93=W83vW84, M98=W93vW94, M101=W97vW98 — all left lane).
+  // Left lane (first 8):  M74, M77, M73, M75, M83, M84, M81, M82
+  // Right lane (last 8):  M76, M78, M79, M80, M86, M88, M85, M87
+  // Order within each lane is paired so adjacent r32 entries feed the same r16 entry,
+  // and adjacent r16 entries feed the same qf entry — keeps the visual nesting honest.
   r32: [
-    { id:"r32_1",  label:"M73",  slotA:"2A",      slotB:"2B"      }, // 2A vs 2B
     { id:"r32_2",  label:"M74",  slotA:"1E",      slotB:"3ABCDF"  }, // 1E vs 3rd(A/B/C/D/F)
-    { id:"r32_3",  label:"M75",  slotA:"1F",      slotB:"2C"      }, // 1F vs 2C
-    { id:"r32_4",  label:"M76",  slotA:"1C",      slotB:"2F"      }, // 1C vs 2F
     { id:"r32_5",  label:"M77",  slotA:"1I",      slotB:"3CDFGH"  }, // 1I vs 3rd(C/D/F/G/H)
+    { id:"r32_1",  label:"M73",  slotA:"2A",      slotB:"2B"      }, // 2A vs 2B
+    { id:"r32_3",  label:"M75",  slotA:"1F",      slotB:"2C"      }, // 1F vs 2C
+    { id:"r32_11", label:"M83",  slotA:"2K",      slotB:"2L"      }, // 2K vs 2L
+    { id:"r32_12", label:"M84",  slotA:"1H",      slotB:"2J"      }, // 1H vs 2J
+    { id:"r32_9",  label:"M81",  slotA:"1D",      slotB:"3BEFIJ"  }, // 1D vs 3rd(B/E/F/I/J)
+    { id:"r32_10", label:"M82",  slotA:"1G",      slotB:"3AEHIJ"  }, // 1G vs 3rd(A/E/H/I/J)
+    { id:"r32_4",  label:"M76",  slotA:"1C",      slotB:"2F"      }, // 1C vs 2F
     { id:"r32_6",  label:"M78",  slotA:"2E",      slotB:"2I"      }, // 2E vs 2I
     { id:"r32_7",  label:"M79",  slotA:"1A",      slotB:"3CEFHI"  }, // 1A vs 3rd(C/E/F/H/I)
     { id:"r32_8",  label:"M80",  slotA:"1L",      slotB:"3EHIJK"  }, // 1L vs 3rd(E/H/I/J/K)
-    { id:"r32_9",  label:"M81",  slotA:"1D",      slotB:"3BEFIJ"  }, // 1D vs 3rd(B/E/F/I/J)
-    { id:"r32_10", label:"M82",  slotA:"1G",      slotB:"3AEHIJ"  }, // 1G vs 3rd(A/E/H/I/J)
-    { id:"r32_11", label:"M83",  slotA:"2K",      slotB:"2L"      }, // 2K vs 2L
-    { id:"r32_12", label:"M84",  slotA:"1H",      slotB:"2J"      }, // 1H vs 2J
-    { id:"r32_13", label:"M85",  slotA:"1B",      slotB:"3EFGIJ"  }, // 1B vs 3rd(E/F/G/I/J)
     { id:"r32_14", label:"M86",  slotA:"1J",      slotB:"2H"      }, // 1J vs 2H
-    { id:"r32_15", label:"M87",  slotA:"1K",      slotB:"3DEIJL"  }, // 1K vs 3rd(D/E/I/J/L)
     { id:"r32_16", label:"M88",  slotA:"2D",      slotB:"2G"      }, // 2D vs 2G
+    { id:"r32_13", label:"M85",  slotA:"1B",      slotB:"3EFGIJ"  }, // 1B vs 3rd(E/F/G/I/J)
+    { id:"r32_15", label:"M87",  slotA:"1K",      slotB:"3DEIJL"  }, // 1K vs 3rd(D/E/I/J/L)
   ],
   // R16: official FIFA bracket (Match 89–96) — non-sequential R32 feed
+  // Left lane (first 4): M89, M90, M93, M94 — feed qf_1/qf_2
+  // Right lane (last 4): M91, M92, M95, M96 — feed qf_3/qf_4
   r16: [
     { id:"r16_1", label:"M89", slotA:"W_r32_2",  slotB:"W_r32_5"  }, // W74 vs W77
     { id:"r16_2", label:"M90", slotA:"W_r32_1",  slotB:"W_r32_3"  }, // W73 vs W75
-    { id:"r16_3", label:"M91", slotA:"W_r32_4",  slotB:"W_r32_6"  }, // W76 vs W78
-    { id:"r16_4", label:"M92", slotA:"W_r32_7",  slotB:"W_r32_8"  }, // W79 vs W80
     { id:"r16_5", label:"M93", slotA:"W_r32_11", slotB:"W_r32_12" }, // W83 vs W84
     { id:"r16_6", label:"M94", slotA:"W_r32_9",  slotB:"W_r32_10" }, // W81 vs W82
+    { id:"r16_3", label:"M91", slotA:"W_r32_4",  slotB:"W_r32_6"  }, // W76 vs W78
+    { id:"r16_4", label:"M92", slotA:"W_r32_7",  slotB:"W_r32_8"  }, // W79 vs W80
     { id:"r16_7", label:"M95", slotA:"W_r32_14", slotB:"W_r32_16" }, // W86 vs W88
     { id:"r16_8", label:"M96", slotA:"W_r32_13", slotB:"W_r32_15" }, // W85 vs W87
   ],
@@ -1277,12 +1283,33 @@ function BracketImportTree({ diff }) {
 // Scrollable horizontal bracket: R32 left → Final center → R32 right
 // 16 matches per side, converging inward round by round
 // Left side: matches 1-8, Right side: matches 9-16
-function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlots, locked, open }) {
+function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlots, groupRankings, groupFinal, locked, open }) {
   const allTeams = Object.values(TEAMS_BY_GROUP).flat();
 
-  const resolveSlot = (slot) => bracketSlots?.[slot] || slot;
+  // Plain group slots (1A, 2C, ...) resolve from groupRankings, but only once that
+  // group has been marked Final by the admin — provisional standings don't populate
+  // the bracket, since a last-day result could still change them.
+  // 3-letter/digit slots (3ABCDF, ...) are the admin-entered best-3rd-place picks.
+  const isGroupSlot = (slot) => /^[12][A-L]$/.test(slot);
+  const resolveSlot = (slot) => {
+    if (isGroupSlot(slot)) {
+      const g = slot[1];
+      if (!groupFinal?.[g]) return slot;
+      const pos = slot[0] === "1" ? 0 : 1;
+      return groupRankings?.[g]?.[pos] || slot;
+    }
+    return bracketSlots?.[slot] || slot;
+  };
   const isKnown = (name) => allTeams.includes(name);
-  const isResolved = (slot) => bracketSlots?.[slot] != null;
+  const isResolved = (slot) => {
+    if (isGroupSlot(slot)) {
+      const g = slot[1];
+      if (!groupFinal?.[g]) return false;
+      const pos = slot[0] === "1" ? 0 : 1;
+      return groupRankings?.[g]?.[pos] != null;
+    }
+    return bracketSlots?.[slot] != null;
+  };
 
   // Get the team picked/won for a match (for propagation display)
   const getPickedTeam = (matchId) => phase2Picks[matchId] || null;
@@ -2870,6 +2897,8 @@ export default function WorldCupPool() {
                   setPhase2Picks={setPhase2Picks}
                   bracketWinners={bracketWinners}
                   bracketSlots={bracketSlots}
+                  groupRankings={liveResults?.groupRankings}
+                  groupFinal={liveResults?.groupFinal}
                   locked={isPhase2Locked()}
                   open={isPhase2Open()}
                 />
