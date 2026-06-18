@@ -1662,6 +1662,7 @@ export default function WorldCupPool() {
   const [editGbOption, setEditGbOption] = useState(null); // index 0-2
   const [editGbOptionVal, setEditGbOptionVal] = useState({ name:"", pts:"" });
   const [bracketSheetImport, setBracketSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
+  const [bracketSlotsSheetImport, setBracketSlotsSheetImport] = useState({ loading:false, error:"", diff:null, applying:false, done:"" });
   const adminSessionToken = useRef(null);
   const [adminTab, setAdminTab]           = useState("settings");
   const [auditPhase, setAuditPhase]       = useState("p1");
@@ -3732,10 +3733,66 @@ export default function WorldCupPool() {
 
                       {/* Bracket Slots */}
                       <div style={S.card}>
-                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
                           <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1 }}>🏟️ BRACKET SLOTS (R32)</div>
-                          <div style={{ fontSize:9, color:"#666" }}>1X/2X auto-fill from group results · 3X entered manually</div>
+                          <button disabled={bracketSlotsSheetImport.loading} onClick={async () => {
+                            setBracketSlotsSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
+                            try {
+                              const sheet = await fetchScoresheet();
+                              const fresh = await dbLoad();
+                              const currentSlots = fresh.bracketSlots || {};
+                              const sheetRows = {};
+                              sheet.bracket.forEach(row => { if (row.id) sheetRows[row.id.trim()] = row; });
+                              const diff = [];
+                              KNOCKOUT_ROUNDS.r32.forEach(match => {
+                                [["slotA","field3"],["slotB","field4"]].forEach(([slotKey, fieldKey]) => {
+                                  const code = match[slotKey];
+                                  if (!/^3[A-Z]+$/.test(code)) return; // only the 8 best-3rd-place codes
+                                  const row = sheetRows[match.id];
+                                  const sheetVal = (row?.[fieldKey] || "").trim();
+                                  if (!sheetVal || sheetVal === code) return; // sheet still shows the unresolved placeholder
+                                  const current = currentSlots[code] || null;
+                                  if (current === sheetVal) return; // already matches — nothing to do
+                                  diff.push({ code, label: match.label, from: current, to: sheetVal });
+                                });
+                              });
+                              setBracketSlotsSheetImport({ loading:false, error:"", diff, applying:false, done:"" });
+                            } catch (e) {
+                              setBracketSlotsSheetImport({ loading:false, error:e.message, diff:null, applying:false, done:"" });
+                            }
+                          }} style={{ ...S.btn, fontSize:10, padding:"3px 8px" }}>{bracketSlotsSheetImport.loading ? "Loading…" : "📥 Preview Import from Sheet"}</button>
+                          <div style={{ fontSize:9, color:"#666", width:"100%" }}>1X/2X auto-fill from group results · 3X entered manually or imported from sheet</div>
                         </div>
+                        {bracketSlotsSheetImport.error && <div style={{ fontSize:11, color:"#ff9090", marginBottom:8 }}>Error: {bracketSlotsSheetImport.error}</div>}
+                        {bracketSlotsSheetImport.done && <div style={{ fontSize:11, color:"#8fffb0", marginBottom:8 }}>{bracketSlotsSheetImport.done}</div>}
+                        {bracketSlotsSheetImport.diff && (
+                          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(240,208,96,0.25)", borderRadius:6, padding:"8px 10px", marginBottom:12 }}>
+                            {bracketSlotsSheetImport.diff.length === 0 ? (
+                              <div style={{ fontSize:11, color:"#9ab8a0" }}>No changes — sheet matches current bracket slots.</div>
+                            ) : (
+                              <>
+                                <div style={{ fontSize:11, color:"#f0d060", marginBottom:6 }}>Changes found ({bracketSlotsSheetImport.diff.length}):</div>
+                                {bracketSlotsSheetImport.diff.map(d => (
+                                  <div key={d.code} style={{ fontSize:11, color:"#c8b8a0", marginBottom:4, display:"flex", gap:6, flexWrap:"wrap" }}>
+                                    <span style={{ color:"#9ab8a0", minWidth:70 }}>{d.code} ({d.label})</span>
+                                    <span>{d.from || "—"} → <b style={{ color:"#8fffb0" }}>{d.to}</b></span>
+                                  </div>
+                                ))}
+                                <button disabled={bracketSlotsSheetImport.applying} onClick={async () => {
+                                  setBracketSlotsSheetImport(s => ({ ...s, applying:true }));
+                                  try {
+                                    for (const d of bracketSlotsSheetImport.diff) { await settlePut("bracketSlots/"+d.code, d.to); }
+                                    const fresh = await dbLoad();
+                                    setBracketSlots(fresh.bracketSlots);
+                                    setBracketSlotsSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${bracketSlotsSheetImport.diff.length} update(s).` });
+                                  } catch (e) {
+                                    setBracketSlotsSheetImport(s => ({ ...s, applying:false, error:e.message }));
+                                  }
+                                }} style={{ ...S.btn, fontSize:11, padding:"4px 12px", marginTop:6 }}>{bracketSlotsSheetImport.applying ? "Applying…" : `Apply ${bracketSlotsSheetImport.diff.length} change(s)`}</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                         <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
                           {KNOCKOUT_ROUNDS.r32.map(match => {
                             const renderSlot = (slot) => {
