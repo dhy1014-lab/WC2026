@@ -470,6 +470,28 @@ function findKnockoutMatch(matchId) {
   return null;
 }
 
+// Resolve a stored bracket PICK (always a raw terminal code like "1A"/"3ABCDF", or
+// already a real team name once that part of the bracket has actually been decided)
+// into a team name for scoring/comparison. Unlike resolveBracketSlot (which is for
+// resolving the official slot DEFINITIONS and only ever sees the 4 known patterns),
+// this always has a final fallback: a pick that doesn't match a known code pattern
+// is already a real team name, so it's returned as-is.
+// Deliberately NOT gated on groupFinal — by the time a knockout match has an actual
+// result, its feeding group(s) are necessarily over in reality, so scoring should use
+// the best-available group data rather than wait on the admin's Final toggle.
+function resolvePickToTeam(pick, { groupRankings, bracketSlots }) {
+  if (pick == null) return null;
+  if (/^[12][A-L]$/.test(pick)) {
+    const pos = pick[0] === "1" ? 0 : 1;
+    const g = pick[1];
+    return groupRankings?.[g]?.[pos] || pick;
+  }
+  if (/^3[A-Z]+$/.test(pick)) {
+    return bracketSlots?.[pick] || pick;
+  }
+  return pick;
+}
+
 // Resolve a bracket slot (1A, 2C, 3ABCDF, W_r32_1, L_sf_1, ...) to a team name (or null if unresolved).
 // - 1X/2X resolve directly from groupRankings[X][0]/[1] (1st/2nd place)
 // - 3xxx resolve from bracketSlots (best-3rd-place per FIFA draw combination — admin-entered, not derivable client-side)
@@ -548,16 +570,18 @@ const P2_PROP_LOCKS = {
 function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round] || new Date("2099-01-01")); }
 function isP2RoundResultExpected(round) { const t = P2_PROP_LOCKS[round]; return t && new Date() >= new Date(t.getTime() + RESULT_GRACE_MS); }
 
-function calcPhase2Points(phase2Picks, bracketWinners, p2PropResults, goldenBoot, p2PropPicks, goldenBootPick) {
+function calcPhase2Points(phase2Picks, bracketWinners, p2PropResults, goldenBoot, p2PropPicks, goldenBootPick, groupRankings, bracketSlots) {
   let pts = 0;
   // Bracket points (includes third place)
   if (phase2Picks && bracketWinners) {
     Object.entries(ROUND_PTS).forEach(([round, roundPts]) => {
       const matches = KNOCKOUT_ROUNDS[round] || [];
       matches.forEach(match => {
-        const pick = phase2Picks[match.id];
+        const rawPick = phase2Picks[match.id];
         const actual = bracketWinners?.[match.id];
-        if (pick && actual && pick === actual) pts += roundPts;
+        if (!rawPick || !actual) return;
+        const pick = resolvePickToTeam(rawPick, { groupRankings, bracketSlots });
+        if (pick === actual) pts += roundPts;
       });
     });
   }
@@ -983,7 +1007,7 @@ function SparklineChart({ players, predictions, liveResults }) {
 }
 
 // ── HEAD-TO-HEAD MODAL ────────────────────────────────────────────────────────
-function H2HModal({ playerA, playerB, predictions, liveResults, bracketWinners, p2PropResults, goldenBoot, phase, onClose }) {
+function H2HModal({ playerA, playerB, predictions, liveResults, bracketWinners, bracketSlots, p2PropResults, goldenBoot, phase, onClose }) {
   const predA = predictions[playerA.id] || {};
   const predB = predictions[playerB.id] || {};
 
@@ -1004,9 +1028,11 @@ function H2HModal({ playerA, playerB, predictions, liveResults, bracketWinners, 
   const allP2Matches = Object.values(KNOCKOUT_ROUNDS).flat();
   let p2Agree = 0, p2Disagree = 0, p2AWins = 0, p2BWins = 0;
   allP2Matches.forEach(m => {
-    const pa = predA.phase2Picks?.[m.id], pb = predB.phase2Picks?.[m.id];
+    const rawA = predA.phase2Picks?.[m.id], rawB = predB.phase2Picks?.[m.id];
     const actual = bracketWinners?.[m.id];
-    if (!pa || !pb) return;
+    if (!rawA || !rawB) return;
+    const pa = resolvePickToTeam(rawA, { groupRankings: liveResults?.groupRankings, bracketSlots });
+    const pb = resolvePickToTeam(rawB, { groupRankings: liveResults?.groupRankings, bracketSlots });
     if (pa === pb) p2Agree++;
     else { p2Disagree++; if (actual) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
   });
@@ -1017,8 +1043,8 @@ function H2HModal({ playerA, playerB, predictions, liveResults, bracketWinners, 
     if (pa === pb) p2Agree++;
     else { p2Disagree++; if (actual != null) { if (pa === actual) p2AWins++; if (pb === actual) p2BWins++; } }
   });
-  const pts2A = calcPhase2Points(predA.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predA.p2PropPicks, predA.goldenBootPick);
-  const pts2B = calcPhase2Points(predB.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predB.p2PropPicks, predB.goldenBootPick);
+  const pts2A = calcPhase2Points(predA.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predA.p2PropPicks, predA.goldenBootPick, liveResults?.groupRankings, bracketSlots);
+  const pts2B = calcPhase2Points(predB.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predB.p2PropPicks, predB.goldenBootPick, liveResults?.groupRankings, bracketSlots);
 
   const isP1 = phase === "p1";
   const displayPtsA = isP1 ? ptsA : pts2A;
@@ -1285,30 +1311,28 @@ function BracketImportTree({ diff }) {
 // Left side: matches 1-8, Right side: matches 9-16
 function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlots, groupRankings, groupFinal, locked, open }) {
   const allTeams = Object.values(TEAMS_BY_GROUP).flat();
-
-  // Plain group slots (1A, 2C, ...) resolve from groupRankings, but only once that
-  // group has been marked Final by the admin — provisional standings don't populate
-  // the bracket, since a last-day result could still change them.
-  // 3-letter/digit slots (3ABCDF, ...) are the admin-entered best-3rd-place picks.
-  const isGroupSlot = (slot) => /^[12][A-L]$/.test(slot);
-  const resolveSlot = (slot) => {
-    if (isGroupSlot(slot)) {
-      const g = slot[1];
-      if (!groupFinal?.[g]) return slot;
-      const pos = slot[0] === "1" ? 0 : 1;
-      return groupRankings?.[g]?.[pos] || slot;
-    }
-    return bracketSlots?.[slot] || slot;
-  };
   const isKnown = (name) => allTeams.includes(name);
-  const isResolved = (slot) => {
-    if (isGroupSlot(slot)) {
-      const g = slot[1];
-      if (!groupFinal?.[g]) return false;
-      const pos = slot[0] === "1" ? 0 : 1;
-      return groupRankings?.[g]?.[pos] != null;
+
+  // Pattern checks for the two kinds of terminal slot codes.
+  const isGroupSlot = (slot) => /^[12][A-L]$/.test(slot);
+  const is3Slot = (slot) => /^3[A-Z]+$/.test(slot);
+
+  // "Skin" resolution — turns a raw terminal code into a real team name for DISPLAY
+  // only. Picks themselves are never stored as resolved names; every player's bracket
+  // is saved using the exact same raw codes regardless of when they filled it in, so a
+  // group going Final later just changes what's shown, never what's stored. Gated on
+  // groupFinal (not just provisional groupRankings) per the earlier decision — avoids
+  // showing a team in the picker that could still change before the group is settled.
+  const skinResolve = (value) => {
+    if (value == null) return null;
+    if (isGroupSlot(value)) {
+      const g = value[1];
+      if (!groupFinal?.[g]) return value;
+      const pos = value[0] === "1" ? 0 : 1;
+      return groupRankings?.[g]?.[pos] || value;
     }
-    return bracketSlots?.[slot] != null;
+    if (is3Slot(value)) return bracketSlots?.[value] || value;
+    return value; // already a real team name (match actually decided, or unrecognized)
   };
 
   // Get the team picked/won for a match (for propagation display)
@@ -1316,40 +1340,40 @@ function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlo
   const getActualTeam = (matchId) => bracketWinners?.[matchId] || null;
   const getDisplayTeam = (matchId) => getActualTeam(matchId) || getPickedTeam(matchId);
 
-  // Resolve a slot that might be W_xxx or L_xxx
-  const resolveMatchSlot = (slot) => {
+  // Resolve a slot down to its RAW value — what would actually get stored if this
+  // option were picked. A terminal code (1A, 3ABCDF) is already its own raw value, no
+  // skin applied. A W_/L_ reference walks the chain: the real result if that match has
+  // actually been played, otherwise whatever raw value the player already has picked
+  // for it (itself a raw code, by induction) — or null if nothing's picked there yet,
+  // which is exactly what keeps later rounds locked until earlier ones are filled in.
+  const chainValue = (slot) => {
     if (slot.startsWith("W_")) {
-      const matchId = slot.slice(2);
-      return getDisplayTeam(matchId) || slot;
+      return getDisplayTeam(slot.slice(2));
     }
     if (slot.startsWith("L_")) {
-      // SF loser — shown in 3rd place
       const matchId = slot.slice(2);
       const winner = getDisplayTeam(matchId);
-      if (winner) {
-        // Find the other team in that SF match
-        const sfMatch = KNOCKOUT_ROUNDS.sf.find(m => m.id === matchId);
-        if (sfMatch) {
-          const teamA = resolveMatchSlot(sfMatch.slotA);
-          const teamB = resolveMatchSlot(sfMatch.slotB);
-          return (teamA !== winner && teamA !== sfMatch.slotA) ? teamA :
-                 (teamB !== winner && teamB !== sfMatch.slotB) ? teamB : slot;
-        }
-      }
-      return slot;
+      if (!winner) return null;
+      const sfMatch = KNOCKOUT_ROUNDS.sf.find(m => m.id === matchId);
+      if (!sfMatch) return null;
+      const teamA = chainValue(sfMatch.slotA);
+      const teamB = chainValue(sfMatch.slotB);
+      if (teamA && teamA !== winner) return teamA;
+      if (teamB && teamB !== winner) return teamB;
+      return null;
     }
-    return resolveSlot(slot);
+    return slot; // terminal code — already the raw value
   };
 
-  // Cascade-clear downstream picks when a pick changes
-  function pickTeam(matchId, team) {
+  // Cascade-clear downstream picks when a pick changes (unchanged — still pure string
+  // equality on whatever's stored, just comparing raw codes now instead of names)
+  function pickTeam(matchId, value) {
     if (locked || !open) return;
     setPhase2Picks(prev => {
       const next = { ...prev };
       const oldPick = prev[matchId];
-      next[matchId] = team;
-      // If pick changed, clear any downstream picks that had the old team
-      if (oldPick && oldPick !== team) {
+      next[matchId] = value;
+      if (oldPick && oldPick !== value) {
         const downstream = getDownstreamMatches(matchId);
         downstream.forEach(downId => {
           if (next[downId] === oldPick) delete next[downId];
@@ -1384,45 +1408,49 @@ function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlo
 
   // Render a single match card
   function MatchCard({ match, roundKey, pts, side }) {
-    const slotA = match.slotA.startsWith("W_") || match.slotA.startsWith("L_")
-      ? resolveMatchSlot(match.slotA) : resolveSlot(match.slotA);
-    const slotB = match.slotB.startsWith("W_") || match.slotB.startsWith("L_")
-      ? resolveMatchSlot(match.slotB) : resolveSlot(match.slotB);
-
     const rawSlotA = match.slotA;
     const rawSlotB = match.slotB;
-    const slotAResolved = rawSlotA.startsWith("W_") || rawSlotA.startsWith("L_")
-      ? true : isResolved(rawSlotA);
-    const slotBResolved = rawSlotB.startsWith("W_") || rawSlotB.startsWith("L_")
-      ? true : isResolved(rawSlotB);
 
-    const pick = phase2Picks[match.id];
-    const actual = bracketWinners?.[match.id];
-    const won = actual && pick === actual;
-    const lost = actual && pick && pick !== actual;
+    // Raw value each option would store if picked (null = nothing to pick yet —
+    // this is what keeps later rounds locked until the round before it is filled in)
+    const chainA = chainValue(rawSlotA);
+    const chainB = chainValue(rawSlotB);
+    const slotAExists = chainA != null;
+    const slotBExists = chainB != null;
 
-    const canPick = open && !locked && slotAResolved && slotBResolved;
+    // Display text — same raw value, skinned to a real name once resolvable
+    const displayA = chainA != null ? skinResolve(chainA) : null;
+    const displayB = chainB != null ? skinResolve(chainB) : null;
 
-    const TeamBtn = ({ team, rawSlot, resolved }) => {
-      const isPick = pick === team;
-      const isActual = actual === team;
+    const pick = phase2Picks[match.id]; // always a raw value once set
+    const actual = bracketWinners?.[match.id]; // always a real name once set
+    const resolvedPick = pick != null ? skinResolve(pick) : null;
+    const won = actual && resolvedPick === actual;
+    const lost = actual && pick != null && resolvedPick !== actual;
+
+    const canPick = open && !locked && slotAExists && slotBExists;
+
+    const TeamBtn = ({ chainVal, displayText }) => {
+      const isPick = pick === chainVal;
+      const isActual = actual != null && chainVal != null && skinResolve(chainVal) === actual;
       const isWon = isActual && isPick;
-      const isLost = isActual && pick && !isPick;
+      const isLost = isActual && pick != null && !isPick;
+      const known = isKnown(displayText);
       return (
         <button
-          onClick={() => canPick && team !== rawSlot && pickTeam(match.id, team)}
+          onClick={() => canPick && pickTeam(match.id, chainVal)}
           style={{
             width:"100%", padding:"4px 6px", border:"1px solid",
             borderColor: isWon?"rgba(100,255,150,0.6)":isPick?"#f0d060":isLost?"rgba(255,100,100,0.3)":"rgba(255,255,255,0.1)",
             background: isWon?"rgba(0,180,80,0.2)":isPick?"rgba(200,168,75,0.25)":isLost?"rgba(180,50,50,0.1)":"rgba(255,255,255,0.04)",
-            borderRadius:4, cursor: canPick && resolved && team !== rawSlot ? "pointer" : "default",
+            borderRadius:4, cursor: canPick ? "pointer" : "default",
             textAlign:"left", display:"flex", alignItems:"center", gap:4, minHeight:22,
-            opacity: (!canPick || !resolved) ? 0.5 : 1,
+            opacity: !canPick ? 0.5 : 1,
           }}
         >
-          {isKnown(team) && <span style={{ fontSize:11, flexShrink:0 }}>{FLAG[team]||"🏳️"}</span>}
+          {known && <span style={{ fontSize:11, flexShrink:0 }}>{FLAG[displayText]||"🏳️"}</span>}
           <span style={{ fontSize:9, color: isPick?"#f0d060":isLost?"#ff9090":"#c8b8a0", fontWeight: isPick?"bold":"normal", lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-            {isKnown(team) ? team : resolved ? team : "TBD"}
+            {displayText || "TBD"}
           </span>
           {isWon && <span style={{ fontSize:8, color:"#8fffb0", flexShrink:0 }}>✓</span>}
           {isLost && <span style={{ fontSize:8, color:"#ff9090", flexShrink:0 }}>✗</span>}
@@ -1440,8 +1468,8 @@ function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlo
           <span style={{ color:"#f0d060" }}>+{pts}</span>
         </div>
         <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-          <TeamBtn team={slotA} rawSlot={rawSlotA} resolved={slotAResolved} />
-          <TeamBtn team={slotB} rawSlot={rawSlotB} resolved={slotBResolved} />
+          <TeamBtn chainVal={chainA} displayText={displayA} />
+          <TeamBtn chainVal={chainB} displayText={displayB} />
         </div>
       </div>
     );
@@ -1465,10 +1493,10 @@ function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlo
   // Center column: SF → Final + 3rd place
   const finalMatch = KNOCKOUT_ROUNDS.final[0];
   const thirdMatch = KNOCKOUT_ROUNDS.third[0];
-  const finalSlotA = resolveMatchSlot(finalMatch.slotA);
-  const finalSlotB = resolveMatchSlot(finalMatch.slotB);
-  const thirdSlotA = resolveMatchSlot(thirdMatch.slotA);
-  const thirdSlotB = resolveMatchSlot(thirdMatch.slotB);
+  const finalChainA = chainValue(finalMatch.slotA);
+  const finalChainB = chainValue(finalMatch.slotB);
+  const thirdChainA = chainValue(thirdMatch.slotA);
+  const thirdChainB = chainValue(thirdMatch.slotB);
 
   return (
     <div style={{ overflowX:"auto", overflowY:"visible", WebkitOverflowScrolling:"touch", marginLeft:-14, marginRight:-14, paddingLeft:14 }}>
@@ -1491,32 +1519,31 @@ function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlo
               <div style={{ fontSize:8, color:"#f0d060", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
                 <span>Final</span><span>+{ROUND_PTS.final}</span>
               </div>
-              {[
-                [finalMatch.slotA, finalSlotA],
-                [finalMatch.slotB, finalSlotB],
-              ].map(([rawSlot, team]) => {
+              {[finalChainA, finalChainB].map(chainVal => {
+                const exists = chainVal != null;
+                const displayText = exists ? skinResolve(chainVal) : null;
                 const pick = phase2Picks[finalMatch.id];
                 const actual = bracketWinners?.[finalMatch.id];
-                const isPick = pick === team;
-                const isActual = actual === team;
-                const resolved = team !== rawSlot;
+                const isPick = exists && pick === chainVal;
+                const isActual = exists && actual != null && skinResolve(chainVal) === actual;
+                const canPick = open && !locked && exists;
                 return (
-                  <button key={rawSlot}
-                    onClick={() => resolved && pickTeam(finalMatch.id, team)}
+                  <button key={chainVal || Math.random()}
+                    onClick={() => canPick && pickTeam(finalMatch.id, chainVal)}
                     style={{
                       width:"100%", padding:"5px 7px", border:"1px solid", marginBottom:3,
                       borderColor: isPick?"#f0d060":isActual?"rgba(100,255,150,0.5)":"rgba(255,255,255,0.1)",
                       background: isPick?"rgba(200,168,75,0.3)":isActual?"rgba(0,180,80,0.15)":"rgba(255,255,255,0.04)",
-                      borderRadius:4, cursor: resolved ? "pointer" : "default",
+                      borderRadius:4, cursor: canPick ? "pointer" : "default",
                       display:"flex", alignItems:"center", gap:5, minHeight:26,
-                      opacity: resolved ? 1 : 0.4,
+                      opacity: canPick ? 1 : 0.4,
                     }}
                   >
-                    {isKnown(team) && <span style={{ fontSize:13 }}>{FLAG[team]||"🏳️"}</span>}
+                    {isKnown(displayText) && <span style={{ fontSize:13 }}>{FLAG[displayText]||"🏳️"}</span>}
                     <span style={{ fontSize:10, color: isPick?"#f0d060":"#c8b8a0", fontWeight: isPick?"bold":"normal", lineHeight:1.2, flex:1, textAlign:"left", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {isKnown(team) ? team : "TBD"}
+                      {displayText || "TBD"}
                     </span>
-                    {isPick && actual === team && <span style={{ fontSize:10 }}>🏆</span>}
+                    {isPick && isActual && <span style={{ fontSize:10 }}>🏆</span>}
                   </button>
                 );
               })}
@@ -1533,32 +1560,31 @@ function VisualBracket({ phase2Picks, setPhase2Picks, bracketWinners, bracketSlo
               <div style={{ fontSize:8, color:"#9ab8a0", marginBottom:4, display:"flex", justifyContent:"space-between" }}>
                 <span>3rd Place</span><span style={{ color:"#f0d060" }}>+{ROUND_PTS.third}</span>
               </div>
-              {[
-                [thirdMatch.slotA, thirdSlotA],
-                [thirdMatch.slotB, thirdSlotB],
-              ].map(([rawSlot, team]) => {
+              {[thirdChainA, thirdChainB].map(chainVal => {
+                const exists = chainVal != null;
+                const displayText = exists ? skinResolve(chainVal) : null;
                 const pick = phase2Picks[thirdMatch.id];
                 const actual = bracketWinners?.[thirdMatch.id];
-                const isPick = pick === team;
-                const isActual = actual === team;
-                const resolved = team !== rawSlot;
+                const isPick = exists && pick === chainVal;
+                const isActual = exists && actual != null && skinResolve(chainVal) === actual;
+                const canPick = open && !locked && exists;
                 return (
-                  <button key={rawSlot}
-                    onClick={() => resolved && pickTeam(thirdMatch.id, team)}
+                  <button key={chainVal || Math.random()}
+                    onClick={() => canPick && pickTeam(thirdMatch.id, chainVal)}
                     style={{
                       width:"100%", padding:"4px 6px", border:"1px solid", marginBottom:3,
                       borderColor: isPick?"#f0d060":isActual?"rgba(100,255,150,0.5)":"rgba(255,255,255,0.1)",
                       background: isPick?"rgba(200,168,75,0.25)":"rgba(255,255,255,0.04)",
-                      borderRadius:4, cursor: resolved ? "pointer" : "default",
+                      borderRadius:4, cursor: canPick ? "pointer" : "default",
                       display:"flex", alignItems:"center", gap:4, minHeight:22,
-                      opacity: resolved ? 1 : 0.4,
+                      opacity: canPick ? 1 : 0.4,
                     }}
                   >
-                    {isKnown(team) && <span style={{ fontSize:11 }}>{FLAG[team]||"🏳️"}</span>}
+                    {isKnown(displayText) && <span style={{ fontSize:11 }}>{FLAG[displayText]||"🏳️"}</span>}
                     <span style={{ fontSize:9, color: isPick?"#f0d060":"#c8b8a0", fontWeight: isPick?"bold":"normal", lineHeight:1.2, flex:1, textAlign:"left", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {isKnown(team) ? team : "TBD"}
+                      {displayText || "TBD"}
                     </span>
-                    {isPick && actual === team && <span style={{ fontSize:9 }}>🥉</span>}
+                    {isPick && isActual && <span style={{ fontSize:9 }}>🥉</span>}
                   </button>
                 );
               })}
@@ -1902,9 +1928,14 @@ export default function WorldCupPool() {
   const totalBracketMatches = Object.values(KNOCKOUT_ROUNDS).flat().length;
   const bracketDone = Object.keys(phase2Picks).length;
   const p2PropsDone = Object.keys(p2PropPicks).length;
-  const p2Complete = !isPhase2Open() || (bracketDone >= totalBracketMatches && goldenBootPick && tbP2 !== "");
+  // Admin can open P2 picking (bracket/props/tiebreaker) early — before the scheduled
+  // PHASE2_OPEN — to give players more lead time during the group stage. This never
+  // touches the LOCK side (isPhase2Locked/isP2PropRoundLocked stay exactly as scheduled,
+  // tied to each round's actual kickoff) — only how early picking can start.
+  const p2EffectivelyOpen = isPhase2Open() || !!settings.p2Unlock;
+  const p2Complete = !p2EffectivelyOpen || (bracketDone >= totalBracketMatches && goldenBootPick && tbP2 !== "");
   const p1Complete = groupsDone >= 12 && (unlockedProps === 0 || unlockedPropsDone >= unlockedProps) && tbP1 !== "";
-  const hasIncomplete = currentPlayer && !isAdmin && (!p1Complete || (isPhase2Open() && !p2Complete));
+  const hasIncomplete = currentPlayer && !isAdmin && (!p1Complete || (p2EffectivelyOpen && !p2Complete));
 
   // Count results that are past their lock time but still null — used to badge the audit tab
   const needsOverrideCount = isAdmin ? (() => {
@@ -1925,7 +1956,7 @@ export default function WorldCupPool() {
       .map(p => ({
         ...p,
         pts: calcPoints(predictions[p.id], liveResults, finalOnly),
-        pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick),
+        pts2: calcPhase2Points(predictions[p.id]?.phase2Picks, bracketWinners, p2PropResults, goldenBoot, predictions[p.id]?.p2PropPicks, predictions[p.id]?.goldenBootPick, liveResults?.groupRankings, bracketSlots),
         hasPred: !!predictions[p.id]
       }))
       .sort((a, b) => {
@@ -2151,7 +2182,7 @@ export default function WorldCupPool() {
 
       {/* H2H Modal */}
       {h2hPlayerA && h2hPlayerB && (
-        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} bracketWinners={bracketWinners} p2PropResults={p2PropResults} goldenBoot={goldenBoot} phase={lbPhase} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
+        <H2HModal playerA={h2hPlayerA} playerB={h2hPlayerB} predictions={predictions} liveResults={liveResults} bracketWinners={bracketWinners} bracketSlots={bracketSlots} p2PropResults={p2PropResults} goldenBoot={goldenBoot} phase={lbPhase} onClose={() => { setH2hPlayerA(null); setH2hPlayerB(null); }} />
       )}
 
       {/* How It Works Modal */}
@@ -2464,8 +2495,8 @@ export default function WorldCupPool() {
                   <div style={{ fontSize:12, color:"#f0d060", fontWeight:"bold", marginBottom:2 }}>⚠️ You have incomplete picks</div>
                   <div style={{ fontSize:11, color:"#c8b8a0" }}>
                     {!p1Complete && `P1: ${groupsDone}/12 groups · ${unlockedPropsDone}/${unlockedProps} props${tbP1===""?" · tiebreaker missing":""}`}
-                    {!p1Complete && isPhase2Open() && !p2Complete && " · "}
-                    {isPhase2Open() && !p2Complete && `P2: ${bracketDone}/${totalBracketMatches} bracket${!goldenBootPick?" · golden boot missing":""}${tbP2===""?" · tiebreaker missing":""}`}
+                    {!p1Complete && p2EffectivelyOpen && !p2Complete && " · "}
+                    {p2EffectivelyOpen && !p2Complete && `P2: ${bracketDone}/${totalBracketMatches} bracket${!goldenBootPick?" · golden boot missing":""}${tbP2===""?" · tiebreaker missing":""}`}
                   </div>
                 </div>
                 <button onClick={() => setScreen("predict")} style={{ ...S.btn, fontSize:11, padding:"6px 12px", whiteSpace:"nowrap" }}>Go to My Picks →</button>
@@ -2654,7 +2685,7 @@ export default function WorldCupPool() {
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
               <div>
                 <div style={{ fontSize:17, color:"#f0d060" }}>📋 {displayName(currentPlayer)}'s Picks</div>
-                <div style={{ fontSize:11, color: hasIncomplete ? "#f0d060" : "#9ab8a0" }}>{hasIncomplete ? "⚠️ " : ""}{groupsDone}/12 groups · {propsDone}/34 props{isPhase2Open() && !p2Complete ? ` · P2 ${bracketDone}/${totalBracketMatches} bracket` : ""}</div>
+                <div style={{ fontSize:11, color: hasIncomplete ? "#f0d060" : "#9ab8a0" }}>{hasIncomplete ? "⚠️ " : ""}{groupsDone}/12 groups · {propsDone}/34 props{p2EffectivelyOpen && !p2Complete ? ` · P2 ${bracketDone}/${totalBracketMatches} bracket` : ""}</div>
               </div>
               <div style={{ display:"flex", gap:8 }}>
                 <button onClick={() => setScreen("home")} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"6px 10px", color:"#9ab8a0", cursor:"pointer", fontSize:12 }}>← Home</button>
@@ -2697,7 +2728,7 @@ export default function WorldCupPool() {
             {/* ── PHASE 2 SUB-TABS ── */}
             {picksPhase==="p2" && (
               <div style={{ display:"flex", gap:4, marginBottom:14, flexWrap:"wrap" }}>
-                {[["bracket", isPhase2Open() && bracketDone<totalBracketMatches ? `⚠️ Bracket (${bracketDone}/${totalBracketMatches})` : `${bracketDone>0?"✓ ":""}Bracket${bracketDone>0?" ("+bracketDone+"/"+totalBracketMatches+")":""}`],["props","🎲 Props"],["tb2", isPhase2Open() && tbP2==="" ? "⚠️ Tiebreaker" : `${tbP2?"✓ ":""}Tiebreaker`]].map(([t,l]) => (
+                {[["bracket", p2EffectivelyOpen && bracketDone<totalBracketMatches ? `⚠️ Bracket (${bracketDone}/${totalBracketMatches})` : `${bracketDone>0?"✓ ":""}Bracket${bracketDone>0?" ("+bracketDone+"/"+totalBracketMatches+")":""}`],["props","🎲 Props"],["tb2", p2EffectivelyOpen && tbP2==="" ? "⚠️ Tiebreaker" : `${tbP2?"✓ ":""}Tiebreaker`]].map(([t,l]) => (
                   <button key={t} style={S.tab(p2Tab===t)} onClick={() => setP2Tab(t)}>{l}</button>
                 ))}
               </div>
@@ -2855,7 +2886,7 @@ export default function WorldCupPool() {
             {/* PHASE 2 — BRACKET */}
             {picksPhase==="p2" && p2Tab==="bracket" && (
               <div>
-                {!isPhase2Open() && (
+                {!p2EffectivelyOpen && (
                   <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
                     <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Bracket picks open Jun 27 evening</div>
                     <div style={{ fontSize:11, color:"#9ab8a0" }}>Preview the bracket below — picks lock Jun 28 at noon ET</div>
@@ -2866,13 +2897,13 @@ export default function WorldCupPool() {
                     🔒 Knockout picks are locked
                   </div>
                 )}
-                {isPhase2Open() && !isPhase2Locked() && (
+                {p2EffectivelyOpen && !isPhase2Locked() && (
                   <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:10 }}>
                     Tap a team to advance them. Locks Jun 28 at noon ET. Changing a pick clears conflicting downstream picks.<br/>
                     <span style={{ color:"#f0d060" }}>+4</span> R32 · <span style={{ color:"#f0d060" }}>+8</span> R16 · <span style={{ color:"#f0d060" }}>+16</span> QF · <span style={{ color:"#f0d060" }}>+32</span> SF · <span style={{ color:"#f0d060" }}>+8</span> 3rd · <span style={{ color:"#f0d060" }}>+64</span> Final
                   </div>
                 )}
-                {!isPhase2Open() && (
+                {!p2EffectivelyOpen && (
                   <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10 }}>
                     <span style={{ color:"#f0d060" }}>+4</span> R32 · <span style={{ color:"#f0d060" }}>+8</span> R16 · <span style={{ color:"#f0d060" }}>+16</span> QF · <span style={{ color:"#f0d060" }}>+32</span> SF · <span style={{ color:"#f0d060" }}>+8</span> 3rd · <span style={{ color:"#f0d060" }}>+64</span> Final
                   </div>
@@ -2900,7 +2931,7 @@ export default function WorldCupPool() {
                   groupRankings={liveResults?.groupRankings}
                   groupFinal={liveResults?.groupFinal}
                   locked={isPhase2Locked()}
-                  open={isPhase2Open()}
+                  open={p2EffectivelyOpen}
                 />
               </div>
             )}
@@ -2908,7 +2939,7 @@ export default function WorldCupPool() {
             {/* PHASE 2 — PROPS */}
             {picksPhase==="p2" && p2Tab==="props" && (
               <div>
-                {!isPhase2Open() && (
+                {!p2EffectivelyOpen && (
                   <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
                     <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Phase 2 props open Jun 27 evening</div>
                     <div style={{ fontSize:11, color:"#9ab8a0" }}>Preview the props below — each round locks at its first kickoff</div>
@@ -2921,7 +2952,7 @@ export default function WorldCupPool() {
                 {Object.entries(ROUND_LABELS).map(([round, roundLabel]) => {
                   const roundProps = P2_PROPS.filter(p => p.round === round);
                   const locked = isP2PropRoundLocked(round);
-                  const open = isPhase2Open();
+                  const open = p2EffectivelyOpen;
                   return (
                     <div key={round} style={{ marginBottom:20 }}>
                       <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:10, paddingBottom:4, borderBottom:"1px solid rgba(200,168,75,0.2)", display:"flex", justifyContent:"space-between" }}>
@@ -3133,7 +3164,8 @@ export default function WorldCupPool() {
                   );
                 })}
                 <button onClick={async () => {
-                  const s = { entryFee: parseFloat(editFee)||0, commCut: parseFloat(editComm)||0, p1Split: parseFloat(editP1Split)||50, payouts1: editPayouts1.map(v => parseFloat(v)||0), payouts2: editPayouts2.map(v => parseFloat(v)||0) };
+                  const fresh = await dbLoad();
+                  const s = { ...(fresh.settings||settings), entryFee: parseFloat(editFee)||0, commCut: parseFloat(editComm)||0, p1Split: parseFloat(editP1Split)||50, payouts1: editPayouts1.map(v => parseFloat(v)||0), payouts2: editPayouts2.map(v => parseFloat(v)||0) };
                   setSettings(s);
                   await dbSave(players, predictions, paid, s);
                 }} style={{ ...S.btn, fontSize:11, padding:"6px 16px" }}>💾 Save Settings</button>
@@ -3314,7 +3346,8 @@ export default function WorldCupPool() {
                   (KNOCKOUT_ROUNDS[round]||[]).map(match => {
                     const pick = pred.phase2Picks?.[match.id];
                     const actual = bracketWinners?.[match.id];
-                    const won = pick && actual && pick === actual;
+                    const resolvedPick = resolvePickToTeam(pick, { groupRankings: liveResults?.groupRankings, bracketSlots });
+                    const won = pick && actual && resolvedPick === actual;
                     if (won) bracketPts += roundPts;
                     return { match, round, roundPts, pick, actual, won };
                   })
@@ -3675,6 +3708,28 @@ export default function WorldCupPool() {
                   {/* ── P2 AUDIT ── */}
                   {auditPhase==="p2" && (
                     <div>
+                      {/* Unlock override */}
+                      <div style={S.card}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                          <div style={{ fontSize:11, color:"#9ab8a0", letterSpacing:1 }}>🔓 OPEN P2 EARLY</div>
+                          <div style={{ fontSize:9, color:"#666" }}>Lets players start filling in bracket/props/tiebreaker before Jun 27 · lock times at each round's kickoff are unaffected</div>
+                        </div>
+                        <button onClick={async () => {
+                          const fresh = await dbLoad();
+                          const freshSettings = fresh.settings || settings;
+                          const newSettings = { ...freshSettings, p2Unlock: !freshSettings.p2Unlock };
+                          setSettings(newSettings);
+                          await dbSave(players, predictions, paid, newSettings);
+                        }} style={{
+                          padding:"7px 14px", borderRadius:8, border:"1px solid", cursor:"pointer", fontSize:12, fontWeight: settings.p2Unlock?"bold":"normal",
+                          borderColor: settings.p2Unlock ? "rgba(140,255,176,0.5)" : "rgba(255,255,255,0.15)",
+                          background: settings.p2Unlock ? "rgba(140,255,176,0.15)" : "rgba(255,255,255,0.04)",
+                          color: settings.p2Unlock ? "#8fffb0" : "#9ab8a0",
+                        }}>
+                          {settings.p2Unlock ? "🔓 P2 open early — click to revert to schedule" : "🔒 P2 follows schedule — click to open early"}
+                        </button>
+                      </div>
+
                       {/* Bracket Slots */}
                       <div style={S.card}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
