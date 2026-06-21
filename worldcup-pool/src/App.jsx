@@ -358,9 +358,11 @@ function isPropResultExpected(i) { return PROP_LOCKS[i] && new Date() >= new Dat
 
 
 // ── PHASE 2 KNOCKOUT BRACKET ─────────────────────────────────────────────────
-// Phase 2 opens after group stage (Jun 27 evening) and locks Jun 28 at kickoff
+// Phase 2 opens after group stage (Jun 27 evening) and locks at first R32 kickoff.
+// Bracket, Golden Boot, and the P2 tiebreaker all lock at this same moment —
+// first kickoff of the knockout stage (Match 73, 2A v 2B, 3pm ET).
 const PHASE2_OPEN  = new Date("2026-06-28T00:00:00Z"); // Jun 27 8pm ET
-const PHASE2_LOCK  = new Date("2026-06-28T16:00:00Z"); // Jun 28 9am PT
+const PHASE2_LOCK  = new Date("2026-06-28T19:00:00Z"); // Jun 28 3pm ET — M73 kickoff
 
 function isPhase2Open()   { return new Date() >= PHASE2_OPEN; }
 function isPhase2Locked() { return new Date() >= PHASE2_LOCK; }
@@ -530,42 +532,42 @@ function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, bra
 // 15 props across 5 rounds (3 per round), each locking at that round's first kickoff
 // ptsYes + ptsNo = 10 (weighted by likelihood); Golden Boot prop (#15) sums to 20
 const P2_PROPS = [
-  // R32 props — lock Jun 28 noon ET (first R32 kickoff)
+  // R32 props — lock Jun 28 3pm ET (first R32 kickoff)
   { round:"r32", id:"p2_r32_a", q:"Will at least one R32 match be decided by a single goal in regulation?",         ptsYes:4, ptsNo:6, yes:"Single-goal winner somewhere",       no:"All R32 winners win by 2+" },
   { round:"r32", id:"p2_r32_b", q:"Will at least one top-10 FIFA-ranked team be eliminated in the R32?",           ptsYes:5, ptsNo:5, yes:"Top-10 side knocked out",             no:"All top-10 sides survive" },
   { round:"r32", id:"p2_r32_c", q:"Will there be a hat-trick in any R32 match (regulation or ET)?",               ptsYes:9, ptsNo:1, yes:"Hat-trick hero!",                     no:"No hat-tricks in the R32" },
-  // R16 props — lock ~Jul 3 (first R16 kickoff)
+  // R16 props — lock Jul 4 1pm ET (first R16 kickoff)
   { round:"r16", id:"p2_r16_a", q:"Will a match-deciding goal be scored in 90+ stoppage time in any R16 match (regulation only)?", ptsYes:5, ptsNo:5, yes:"Late drama wins it!", no:"No stoppage-time deciders" },
   { round:"r16", id:"p2_r16_b", q:"Will at least 3 of the 8 R16 matches go to ET or penalties?",                  ptsYes:5, ptsNo:5, yes:"3+ R16 matches go long",             no:"Fewer than 3 go to ET/pens" },
   { round:"r16", id:"p2_r16_c", q:"Will a team from outside Europe or South America win an R16 match in regulation?", ptsYes:5, ptsNo:5, yes:"Non-Euro/SA side wins in 90",   no:"Only Euro/SA sides win in regulation" },
-  // QF props — lock ~Jul 7 (first QF kickoff)
+  // QF props — lock Jul 9 4pm ET (first QF kickoff)
   { round:"qf",  id:"p2_qf_a",  q:"Will at least one QF be decided by penalties?",                                ptsYes:5, ptsNo:5, yes:"QF goes to a shootout",              no:"No QF shootouts" },
   { round:"qf",  id:"p2_qf_b",  q:"Will there be a red card in any QF match (regulation or ET)?",                 ptsYes:6, ptsNo:4, yes:"Someone sees red in the QFs",         no:"All QFs stay at 11 v 11" },
   { round:"qf",  id:"p2_qf_c",  q:"Will any QF winner win by 2+ goals in regulation?",                            ptsYes:4, ptsNo:6, yes:"Comfortable QF win by 2+",           no:"All QFs tight — 1 goal or less in regulation" },
-  // SF props — lock ~Jul 14 (first SF kickoff)
+  // SF props — lock Jul 14 3pm ET (first SF kickoff)
   { round:"sf",  id:"p2_sf_a",  q:"Will at least one SF produce 3+ total goals in regulation?",                   ptsYes:5, ptsNo:5, yes:"3+ goals in a SF",                   no:"Both SFs stay under 3 goals in regulation" },
   { round:"sf",  id:"p2_sf_b",  q:"Will either SF see a team fall behind and come back to win in regulation or ET?", ptsYes:5, ptsNo:5, yes:"Comeback win in a SF",           no:"No SF comebacks" },
   { round:"sf",  id:"p2_sf_c",  q:"Will there be an own goal in either SF (regulation or ET)?",                   ptsYes:7, ptsNo:3, yes:"Own goal in a SF",                   no:"No SF own goals" },
-  // Final props — lock ~Jul 18 (Final kickoff)
+  // Final props — lock Jul 19 3pm ET (Final kickoff)
   { round:"final", id:"p2_final_a", q:"Will the Final go to ET or penalties?",                                    ptsYes:5, ptsNo:5, yes:"Final goes beyond 90",               no:"Final decided in regulation" },
   { round:"final", id:"p2_final_b", q:"Will there be a red card in the Final (regulation or ET)?",                ptsYes:8, ptsNo:2, yes:"Red card in the Final!",              no:"No red cards in the Final" },
   { round:"final", id:"p2_final_c", q:"Will the Final's first goal come from outside the box?",                   ptsYes:7, ptsNo:3, yes:"Long-range opener!",                  no:"First goal from inside the box" },
 ];
 
-// Golden Boot prop — multi-choice, locks Jun 28 at R32 kickoff
+// Golden Boot prop — multi-choice, locks at first R32 kickoff (same moment as bracket lock)
 // options populated by auto-fetch after group stage; weights set dynamically
 // stored in Firebase at pool.goldenBoot: { options: [{name, pts}], answer: name|null }
-const GOLDEN_BOOT_LOCK = new Date("2026-06-28T16:00:00Z"); // Jun 28 noon ET
+const GOLDEN_BOOT_LOCK = new Date("2026-06-28T19:00:00Z"); // Jun 28 3pm ET — M73 kickoff
 function isGoldenBootLocked() { return new Date() >= GOLDEN_BOOT_LOCK; }
 
-// Per-round lock times for P2 props (approximate first kickoff of each round)
-// Will be refined once schedule is confirmed; these are best estimates
+// Per-round lock times for P2 props — each round's props lock at the kickoff of
+// that round's first match (confirmed FIFA schedule).
 const P2_PROP_LOCKS = {
-  r32:   new Date("2026-06-28T16:00:00Z"), // Jun 28 noon ET
-  r16:   new Date("2026-07-03T16:00:00Z"), // Jul 3 noon ET (approx)
-  qf:    new Date("2026-07-07T16:00:00Z"), // Jul 7 noon ET (approx)
-  sf:    new Date("2026-07-14T16:00:00Z"), // Jul 14 noon ET (approx)
-  final: new Date("2026-07-18T16:00:00Z"), // Jul 18 noon ET (approx)
+  r32:   new Date("2026-06-28T19:00:00Z"), // Jun 28 3pm ET — M73 (2A v 2B)
+  r16:   new Date("2026-07-04T17:00:00Z"), // Jul 4 1pm ET — M89 (Houston)
+  qf:    new Date("2026-07-09T20:00:00Z"), // Jul 9 4pm ET — M97 (Foxborough)
+  sf:    new Date("2026-07-14T19:00:00Z"), // Jul 14 3pm ET — M101 (Arlington)
+  final: new Date("2026-07-19T19:00:00Z"), // Jul 19 3pm ET — M104 (MetLife)
 };
 function isP2PropRoundLocked(round) { return new Date() >= (P2_PROP_LOCKS[round] || new Date("2099-01-01")); }
 function isP2RoundResultExpected(round) { const t = P2_PROP_LOCKS[round]; return t && new Date() >= new Date(t.getTime() + RESULT_GRACE_MS); }
@@ -2304,7 +2306,7 @@ export default function WorldCupPool() {
                   {/* Bracket */}
                   <div style={{ ...S.card, marginBottom:14 }}>
                     <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🏆 BRACKET PICKS</div>
-                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>Pick the winner of every knockout match from the Round of 32 through the Final, plus the 3rd place match. The bracket opens Jun 27 evening once group stage slots are known and locks Jun 28 at noon ET.</div>
+                    <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>Pick the winner of every knockout match from the Round of 32 through the Final, plus the 3rd place match. The bracket opens Jun 27 evening once group stage slots are known and locks Jun 28 at 3pm ET (first R32 kickoff).</div>
                     <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:10 }}>Team slots (1A, 2C, etc.) auto-resolve to real teams after the group stage ends.</div>
                     <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:4 }}>
                       {[["Round of 32","4 pts"],["Round of 16","8 pts"],["Quarter-Finals","16 pts"],["Semi-Finals","32 pts"],["3rd Place","8 pts"],["Final","64 pts"]].map(([r,p]) => (
@@ -2321,7 +2323,7 @@ export default function WorldCupPool() {
                     <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🎲 KNOCKOUT PROPS</div>
                     <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:10 }}>15 YES/NO props — 3 per round (R32, R16, QF, SF, Final). Same weighted odds system as Phase 1: each prop sums to 10 pts, with the less likely side paying more.</div>
                     <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                      {[["R32 props","Lock Jun 28 at noon ET (first R32 kickoff)"],["R16 props","Lock at first R16 kickoff (~Jul 3)"],["QF props","Lock at first QF kickoff (~Jul 7)"],["SF props","Lock at first SF kickoff (~Jul 14)"],["Final props","Lock at Final kickoff (~Jul 18)"]].map(([r,v]) => (
+                      {[["R32 props","Lock Jun 28 at 3pm ET (first R32 kickoff)"],["R16 props","Lock Jul 4 at 1pm ET (first R16 kickoff)"],["QF props","Lock Jul 9 at 4pm ET (first QF kickoff)"],["SF props","Lock Jul 14 at 3pm ET (first SF kickoff)"],["Final props","Lock Jul 19 at 3pm ET (Final kickoff)"]].map(([r,v]) => (
                         <div key={r} style={{ display:"flex", gap:10, fontSize:12, padding:"4px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
                           <span style={{ color:"#c8b8a0", minWidth:80 }}>{r}</span>
                           <span style={{ color:"#9ab8a0" }}>{v}</span>
@@ -2335,7 +2337,7 @@ export default function WorldCupPool() {
                     <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:8 }}>🥾 GOLDEN BOOT</div>
                     <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6 }}>Pick who will finish as the tournament's top scorer. Options are the top 3 group-stage goal scorers plus "Other" (anyone else).</div>
                     <div style={{ fontSize:12, color:"#f0e6c8", marginBottom:6 }}>Points are weighted by the scoring gap — a surprise winner pays more. Worth up to 20 pts.</div>
-                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Options revealed and locked Jun 28 at noon ET.</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Options revealed and locked Jun 28 at 3pm ET.</div>
                   </div>
 
                   {/* Tiebreaker */}
@@ -2348,7 +2350,7 @@ export default function WorldCupPool() {
                   <div style={{ ...S.card, borderColor:"rgba(255,100,100,0.3)", background:"rgba(200,60,60,0.06)", marginBottom:14 }}>
                     <div style={{ fontSize:11, fontWeight:"bold", color:"#ff9090", letterSpacing:1, marginBottom:8 }}>🔒 LOCK TIMES</div>
                     {[
-                      ["Bracket picks + Golden Boot","Jun 28 at noon ET — locks with the first R32 kickoff"],
+                      ["Bracket picks + Golden Boot","Jun 28 at 3pm ET — locks with the first R32 kickoff"],
                       ["R16 / QF / SF / Final props","Each round's 3 props lock at that round's first kickoff"],
                     ].map(([l,v]) => (
                       <div key={l} style={{ fontSize:12, padding:"6px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
@@ -2571,7 +2573,7 @@ export default function WorldCupPool() {
               {[
                 ["🏅 P1 — Group Rankings", "Lock at tournament kickoff — Jun 11 at noon PT (Mexico vs South Africa)."],
                 ["🎲 P1 — Daily Props", "Each prop locks before the first match of that day. Once the day's games start, your answer is final."],
-                ["🏆 P2 — Bracket + Golden Boot", "Lock Jun 28 at noon ET, right after the group stage ends."],
+                ["🏆 P2 — Bracket + Golden Boot", "Lock Jun 28 at 3pm ET, right after the group stage ends."],
                 ["🎲 P2 — Knockout Props", "Each round's 3 props lock at that round's first kickoff (R16, QF, SF, Final)."],
                 ["⚠️ Submit early!", "Don't wait until the last minute — picks that aren't saved before the deadline won't count."],
               ].map(([l,v]) => (
@@ -2890,7 +2892,7 @@ export default function WorldCupPool() {
                 {!p2EffectivelyOpen && (
                   <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
                     <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Bracket picks open Jun 27 evening</div>
-                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Preview the bracket below — picks lock Jun 28 at noon ET</div>
+                    <div style={{ fontSize:11, color:"#9ab8a0" }}>Preview the bracket below — picks lock Jun 28 at 3pm ET</div>
                   </div>
                 )}
                 {isPhase2Locked() && (
@@ -2900,7 +2902,7 @@ export default function WorldCupPool() {
                 )}
                 {p2EffectivelyOpen && !isPhase2Locked() && (
                   <div style={{ fontSize:12, color:"#9ab8a0", marginBottom:10 }}>
-                    Tap a team to advance them. Locks Jun 28 at noon ET. Changing a pick clears conflicting downstream picks.<br/>
+                    Tap a team to advance them. Locks Jun 28 at 3pm ET. Changing a pick clears conflicting downstream picks.<br/>
                     <span style={{ color:"#f0d060" }}>+4</span> R32 · <span style={{ color:"#f0d060" }}>+8</span> R16 · <span style={{ color:"#f0d060" }}>+16</span> QF · <span style={{ color:"#f0d060" }}>+32</span> SF · <span style={{ color:"#f0d060" }}>+8</span> 3rd · <span style={{ color:"#f0d060" }}>+64</span> Final
                   </div>
                 )}
@@ -3020,7 +3022,7 @@ export default function WorldCupPool() {
                 <div style={{ marginBottom:20 }}>
                   <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:10, paddingBottom:4, borderBottom:"1px solid rgba(200,168,75,0.2)", display:"flex", justifyContent:"space-between" }}>
                     <span>🥇 GOLDEN BOOT</span>
-                    {isGoldenBootLocked() ? <span style={{ color:"#ff9090" }}>🔒 Locked</span> : !isPhase2Open() ? <span style={{ color:"#aab0ff" }}>🔜 Opens Jun 27</span> : <span style={{ color:"#9ab8a0" }}>Locks Jun 28 noon ET</span>}
+                    {isGoldenBootLocked() ? <span style={{ color:"#ff9090" }}>🔒 Locked</span> : !isPhase2Open() ? <span style={{ color:"#aab0ff" }}>🔜 Opens Jun 27</span> : <span style={{ color:"#9ab8a0" }}>Locks Jun 28 3pm ET</span>}
                   </div>
                   <div style={{ ...S.card, borderColor:"rgba(200,168,75,0.3)" }}>
                     <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:6 }}>Who will win the Golden Boot (tournament top scorer)?</div>
@@ -3092,7 +3094,7 @@ export default function WorldCupPool() {
                 </div>
                 {isPhase2Locked()
                   ? <div style={{ fontSize:11, color:"#ff9090", marginTop:10 }}>🔒 Locked</div>
-                  : <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10 }}>Locks Jun 28 at noon ET with bracket picks</div>
+                  : <div style={{ fontSize:11, color:"#9ab8a0", marginTop:10 }}>Locks Jun 28 at 3pm ET with bracket picks</div>
                 }
               </div>
             )}
