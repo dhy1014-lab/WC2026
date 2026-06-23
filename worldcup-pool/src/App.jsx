@@ -50,6 +50,7 @@ async function dbLoad() {
     settings: data.settings || { entryFee: 25, commCut: 20, p1Split: 50, payouts1: [60,25,10,5,0], payouts2: [60,25,10,5,0] },
     goldenBoot,
     bracketSlots: (settled.bracketSlots ? Object.assign({}, settled.bracketSlots) : null) || data.bracketSlots || null,
+    bracketSlotsFinal: settled.bracketSlotsFinal || {},
     p2PropResults,
     liveResults,
     bracketWinners,
@@ -1671,11 +1672,10 @@ export default function WorldCupPool() {
   const [expandedBreakdown, setExpandedBreakdown] = useState({});
   const [editingGroup, setEditingGroup]   = useState(null);
   const [editingGroupVal, setEditingGroupVal] = useState("");
-  const [editBracketSlot, setEditBracketSlot] = useState(null);
-  const [editBracketSlotVal, setEditBracketSlotVal] = useState("");
   const [tbAnswerP1Input, setTbAnswerP1Input] = useState(""); // admin entry: actual total group-stage goals
   const [tbAnswerP2Input, setTbAnswerP2Input] = useState(""); // admin entry: actual minute of first goal in the Final
-  const [bracketSlots, setBracketSlots]   = useState(null); // { "1A": "Mexico", "2A": "South Africa", ... }
+  const [bracketSlots, setBracketSlots]         = useState(null); // { "1A": "Mexico", "2A": "South Africa", ... }
+  const [bracketSlotsFinal, setBracketSlotsFinal] = useState({});  // { "3ABCDF": true, ... } — per-slot lock
   const [fetchStatus, setFetchStatus]     = useState("idle");
   const [fetchError, setFetchError]       = useState("");
   const [lastFetched, setLastFetched]     = useState(null);
@@ -1713,6 +1713,7 @@ export default function WorldCupPool() {
         setPaid(data.paid || {});
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
+        if (data.bracketSlotsFinal) setBracketSlotsFinal(data.bracketSlotsFinal);
         if (data.p2PropResults) setLiveP2Props(data.p2PropResults);
         if (data.liveResults) setLiveResults(data.liveResults);
         if (data.bracketWinners) setLivePhase2(data.bracketWinners);
@@ -1782,6 +1783,7 @@ export default function WorldCupPool() {
         setSettings(data.settings || { entryFee:25, commCut:20, p1Split:50, payouts1:[60,25,10,5,0], payouts2:[60,25,10,5,0] });
         if (data.goldenBoot) setGoldenBoot(data.goldenBoot);
         if (data.bracketSlots) setBracketSlots(data.bracketSlots);
+        if (data.bracketSlotsFinal) setBracketSlotsFinal(data.bracketSlotsFinal);
         if (data.p2PropResults) setLiveP2Props(data.p2PropResults);
         if (data.liveResults) { setLiveResults(data.liveResults); setFetchStatus("done"); }
         else setFetchStatus("done");
@@ -3752,6 +3754,7 @@ export default function WorldCupPool() {
                                 [["slotA","field3"],["slotB","field4"]].forEach(([slotKey, fieldKey]) => {
                                   const code = match[slotKey];
                                   if (!/^3[A-Z]+$/.test(code)) return; // only the 8 best-3rd-place codes
+                                  if (fresh.bracketSlotsFinal?.[code]) return; // locked — skip
                                   const row = sheetRows[match.id];
                                   const sheetVal = (row?.[fieldKey] || "").trim();
                                   if (!sheetVal || sheetVal === code) return; // sheet still shows the unresolved placeholder
@@ -3788,6 +3791,7 @@ export default function WorldCupPool() {
                                     for (const d of bracketSlotsSheetImport.diff) { await settlePut("bracketSlots/"+d.code, d.to); }
                                     const fresh = await dbLoad();
                                     setBracketSlots(fresh.bracketSlots);
+                                    if (fresh.bracketSlotsFinal) setBracketSlotsFinal(fresh.bracketSlotsFinal);
                                     setBracketSlotsSheetImport({ loading:false, error:"", diff:null, applying:false, done:`Applied ${bracketSlotsSheetImport.diff.length} update(s).` });
                                   } catch (e) {
                                     setBracketSlotsSheetImport(s => ({ ...s, applying:false, error:e.message }));
@@ -3814,29 +3818,44 @@ export default function WorldCupPool() {
                                   </div>
                                 );
                               }
-                              // 3X — editable
+                              // 3X — dropdown of valid 3rd-place finishers + per-slot lock
                               const team = bracketSlots?.[slot] || null;
-                              const isEditing = editBracketSlot === slot;
+                              const isSlotFinal = !!bracketSlotsFinal?.[slot];
+                              // Valid options: 3rd-place finisher (index 2) from each group in the slot code
+                              const groupLetters = slot.slice(1).split(""); // e.g. "3ABCDF" → ["A","B","C","D","F"]
+                              const validTeams = groupLetters
+                                .map(g => liveResults?.groupRankings?.[g]?.[2])
+                                .filter(Boolean);
                               return (
-                                <div key={slot} style={{ background:"rgba(255,255,255,0.05)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:4, flex:1 }}>
-                                  <span style={{ color:"#f0d060", fontSize:10 }}>{slot}:</span>
-                                  {isEditing ? (
-                                    <>
-                                      <input value={editBracketSlotVal} onChange={e => setEditBracketSlotVal(e.target.value)}
-                                        style={{ ...S.input, width:100, padding:"2px 4px", fontSize:11 }} />
-                                      <button onClick={async () => {
-                                        const updated = { ...(bracketSlots||{}), [slot]: editBracketSlotVal };
-                                        setBracketSlots(updated); await settlePut("bracketSlots/"+slot, editBracketSlotVal);
-                                        setEditBracketSlot(null);
-                                      }} style={{ ...S.btn, fontSize:10, padding:"2px 6px" }}>✓</button>
-                                      <button onClick={() => setEditBracketSlot(null)} style={{ background:"transparent", border:"none", color:"#9ab8a0", cursor:"pointer", fontSize:11 }}>✕</button>
-                                    </>
+                                <div key={slot} style={{ background: isSlotFinal ? "rgba(140,255,176,0.06)" : "rgba(255,255,255,0.05)", borderRadius:4, padding:"4px 8px", fontSize:11, display:"flex", alignItems:"center", gap:6, flex:1, border: isSlotFinal ? "1px solid rgba(140,255,176,0.2)" : "1px solid transparent" }}>
+                                  <span style={{ color:"#f0d060", fontSize:10, whiteSpace:"nowrap" }}>{slot}:</span>
+                                  {isSlotFinal ? (
+                                    <span style={{ color: team ? "#f0e6c8" : "#555", flex:1 }}>{team || "—"}</span>
                                   ) : (
-                                    <span onClick={() => { setEditBracketSlot(slot); setEditBracketSlotVal(team||""); }}
-                                      style={{ color: team?"#f0e6c8":"#555", cursor:"pointer" }}>
-                                      {team||"—"} <span style={{ fontSize:9, color:"#555" }}>✏️</span>
-                                    </span>
+                                    <select value={team || ""} onChange={async e => {
+                                      const val = e.target.value || null;
+                                      const updated = { ...(bracketSlots||{}), [slot]: val };
+                                      if (!val) delete updated[slot];
+                                      setBracketSlots(updated);
+                                      await settlePut("bracketSlots/"+slot, val);
+                                    }} style={{ ...S.input, flex:1, fontSize:11, padding:"2px 4px" }}>
+                                      <option value="">— select —</option>
+                                      {validTeams.length > 0
+                                        ? validTeams.map(t => <option key={t} value={t}>{t}</option>)
+                                        : team ? <option value={team}>{team}</option> : null
+                                      }
+                                    </select>
                                   )}
+                                  <button onClick={async () => {
+                                    const newVal = !isSlotFinal;
+                                    setBracketSlotsFinal(prev => ({ ...prev, [slot]: newVal }));
+                                    await settlePut("bracketSlotsFinal/"+slot, newVal);
+                                  }} style={{
+                                    fontSize:9, padding:"2px 6px", borderRadius:10, border:"1px solid", cursor:"pointer", whiteSpace:"nowrap",
+                                    borderColor: isSlotFinal ? "rgba(140,255,176,0.5)" : "rgba(255,255,255,0.15)",
+                                    background: isSlotFinal ? "rgba(140,255,176,0.15)" : "rgba(255,255,255,0.04)",
+                                    color: isSlotFinal ? "#8fffb0" : "#9ab8a0",
+                                  }}>{isSlotFinal ? "✅ Final" : "📊 Set"}</button>
                                 </div>
                               );
                             };
