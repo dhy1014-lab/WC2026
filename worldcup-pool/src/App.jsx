@@ -2001,15 +2001,28 @@ export default function WorldCupPool() {
 
   function exportCSV() {
     const groupKeys = Object.keys(TEAMS_BY_GROUP);
+    // P2 match list in round order
+    const p2Matches = Object.entries(KNOCKOUT_ROUNDS).flatMap(([round, matches]) =>
+      matches.map(m => ({ ...m, round }))
+    );
+
     // Build header row
     const groupHeaders = groupKeys.map(g => `Group ${g} (1st,2nd,3rd,4th)`);
     const propHeaders = DAILY_PROPS.map(p => `Prop: ${p.date} - ${p.q.substring(0,40)}...`);
-    const headers = ["Player", "Points", "Payment", ...groupHeaders, ...propHeaders];
+    const bracketHeaders = p2Matches.map(m => `Bracket: ${m.label}`);
+    const p2PropHeaders = P2_PROPS.map(p => `P2 Prop (${p.round.toUpperCase()}): ${p.q.substring(0,40)}...`);
+    const headers = [
+      "Player", "P1 Points", "P2 Points", "Payment",
+      ...groupHeaders, ...propHeaders,
+      ...bracketHeaders, ...p2PropHeaders,
+      "Golden Boot Pick", "P2 Tiebreaker (Final first goal min)",
+    ];
 
     // Build rows
     const rows = players.map(p => {
       const pred = predictions[p.id] || {};
-      const pts = calcPoints(pred, liveResults);
+      const pts1 = calcPoints(pred, liveResults);
+      const pts2 = calcPhase2Points(pred.phase2Picks, bracketWinners, p2PropResults, goldenBoot, pred.p2PropPicks, pred.goldenBootPick, liveResults?.groupRankings, bracketSlots);
       const groupCols = groupKeys.map(g => {
         const r = pred.groupRankings?.[g];
         return r ? r.join(" > ") : "";
@@ -2019,7 +2032,23 @@ export default function WorldCupPool() {
         if (pick === null || pick === undefined) return "";
         return pick ? "YES" : "NO";
       });
-      return [p.name, pts, paid[p.id] ? (paid[p.id+"_method"]||"paid") : "unpaid", ...groupCols, ...propCols];
+      const bracketCols = p2Matches.map(m => {
+        const pick = pred.phase2Picks?.[m.id];
+        if (!pick) return "";
+        return resolvePickToTeam(pick, { groupRankings: liveResults?.groupRankings, bracketSlots }) || pick;
+      });
+      const p2PropCols = P2_PROPS.map(prop => {
+        const pick = pred.p2PropPicks?.[prop.id];
+        if (pick === null || pick === undefined) return "";
+        return pick ? "YES" : "NO";
+      });
+      return [
+        p.name, pts1, pts2, paid[p.id] ? (paid[p.id+"_method"]||"paid") : "unpaid",
+        ...groupCols, ...propCols,
+        ...bracketCols, ...p2PropCols,
+        pred.goldenBootPick || "",
+        pred.tbP2 != null ? pred.tbP2 : "",
+      ];
     });
 
     // Convert to CSV string
