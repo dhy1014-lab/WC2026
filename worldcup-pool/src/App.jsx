@@ -3433,6 +3433,7 @@ export default function WorldCupPool() {
                               sheet.group.forEach(row => {
                                 const g = (row.id || "").trim().toUpperCase();
                                 if (!TEAMS_BY_GROUP[g]) return;
+                                if (freshLR.groupFinal?.[g]) return; // locked — skip
                                 const sheetRanking = [row.field1, row.field2, row.field3, row.field4].map(t => (t||"").trim());
                                 if (sheetRanking.every(t => !t)) return; // all blank — nothing to import
                                 // Validate team names against TEAMS_BY_GROUP[g]
@@ -3524,6 +3525,7 @@ export default function WorldCupPool() {
                                           <button onClick={async () => {
                                             const fresh = await dbLoad();
                                             const freshLR = fresh.liveResults || {};
+                                            if (freshLR.groupFinal?.[g]) { setEditingGroup(null); return; } // guard: re-check at save time
                                             const actualFresh = freshLR.groupRankings?.[g] || [null,null,null,null];
                                             const newRanking = [0,1,2,3].map(i => i===idx ? (editingGroupVal||null) : (actualFresh[i]||null));
                                             setEditingGroup(null);
@@ -3533,10 +3535,10 @@ export default function WorldCupPool() {
                                           <button onClick={() => setEditingGroup(null)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:4, padding:"2px 6px", color:"#9ab8a0", cursor:"pointer", fontSize:10 }}>✕</button>
                                         </div>
                                       ) : (
-                                        <div onClick={() => { setEditingGroup({g, idx}); setEditingGroupVal(team||""); }}
-                                          style={{ flex:1, fontSize:11, color: team?"#f0e6c8":"#555", cursor:"pointer", padding:"2px 6px", borderRadius:4, background:"rgba(255,255,255,0.03)", display:"flex", alignItems:"center", gap:4 }}>
+                                        <div onClick={() => { if (isFinal) return; setEditingGroup({g, idx}); setEditingGroupVal(team||""); }}
+                                          style={{ flex:1, fontSize:11, color: team?"#f0e6c8":"#555", cursor: isFinal ? "default" : "pointer", padding:"2px 6px", borderRadius:4, background:"rgba(255,255,255,0.03)", display:"flex", alignItems:"center", gap:4 }}>
                                           {team ? <>{tf(team)} {team}</> : <span style={{ color:"#555" }}>—</span>}
-                                          <span style={{ marginLeft:"auto", fontSize:9, color:"#666" }}>✏️</span>
+                                          {!isFinal && <span style={{ marginLeft:"auto", fontSize:9, color:"#666" }}>✏️</span>}
                                         </div>
                                       )}
                                     </div>
@@ -4140,8 +4142,16 @@ export default function WorldCupPool() {
                                                 <button onClick={async () => {
                                                   if (!resolved) return;
                                                   const fresh = await dbLoad();
-                                                  await settlePut("bracketWinners/"+match.id, team);
-                                                  setLivePhase2({ ...(fresh.bracketWinners||{}), [match.id]: team });
+                                                  if (isWinner) {
+                                                    // re-click winner → clear result
+                                                    await settlePut("bracketWinners/"+match.id, null);
+                                                    const updated = { ...(fresh.bracketWinners||{}) };
+                                                    delete updated[match.id];
+                                                    setLivePhase2(updated);
+                                                  } else {
+                                                    await settlePut("bracketWinners/"+match.id, team);
+                                                    setLivePhase2({ ...(fresh.bracketWinners||{}), [match.id]: team });
+                                                  }
                                                 }} style={{
                                                   padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11,
                                                   cursor: resolved ? "pointer" : "default",
