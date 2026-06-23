@@ -4112,38 +4112,58 @@ export default function WorldCupPool() {
                           </div>
                         )}
                         <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, letterSpacing:1 }}>All matches</div>
-                        {Object.entries(KNOCKOUT_ROUNDS).map(([round, matches]) => (
-                          <div key={round} style={{ marginBottom:14 }}>
-                            <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{ROUND_LABELS[round]} <span style={{ color:"#9ab8a0", fontWeight:"normal" }}>({ROUND_PTS[round]}pts)</span></div>
-                            {matches.map(match => {
-                              const teamA = bracketSlots?.[match.slotA] || match.slotA;
-                              const teamB = bracketSlots?.[match.slotB] || match.slotB;
-                              const winner = bracketWinners?.[match.id];
-                              return (
-                                <div key={match.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", flexWrap:"wrap" }}>
-                                  <span style={{ fontSize:11, color:"#9ab8a0", minWidth:70 }}>{match.label}</span>
-                                  <div style={{ display:"flex", gap:4, flex:1 }}>
-                                    {[teamA, teamB].map((team, ti) => {
-                                      const active = winner === team;
-                                      return (
-                                        <button key={ti} onClick={async () => {
-                                          const fresh = await dbLoad();
-                                          await settlePut("bracketWinners/"+match.id, team);
-                                          setLivePhase2({ ...(fresh.bracketWinners||{}), [match.id]: team });
-                                        }} style={{
-                                          padding:"3px 8px", borderRadius:4, border:"1px solid", fontSize:10, cursor:"pointer",
-                                          borderColor: active ? "#8fffb0" : "rgba(255,255,255,0.1)",
-                                          background: active ? "rgba(100,255,150,0.15)" : "rgba(255,255,255,0.03)",
-                                          color: active ? "#8fffb0" : "#c8b8a0",
-                                        }}>{team}</button>
-                                      );
-                                    })}
+                        {(() => {
+                          const winnersMap = {};
+                          return Object.entries(KNOCKOUT_ROUNDS).map(([round, matches]) => (
+                            <div key={round} style={{ marginBottom:14 }}>
+                              <div style={{ fontSize:11, color:"#f0d060", fontWeight:"bold", marginBottom:6 }}>{ROUND_LABELS[round]} <span style={{ color:"#9ab8a0", fontWeight:"normal" }}>({ROUND_PTS[round]}pts)</span></div>
+                              {matches.map(match => {
+                                const ctx = { groupRankings: liveResults?.groupRankings, bracketSlots, winnersMap, bracketWinners };
+                                const teamA = resolveBracketSlot(match.slotA, ctx) || match.slotA;
+                                const teamB = resolveBracketSlot(match.slotB, ctx) || match.slotB;
+                                const winner = bracketWinners?.[match.id];
+                                if (winner) winnersMap[match.id] = winner;
+                                const resolved = teamA !== match.slotA && teamB !== match.slotB;
+                                return (
+                                  <div key={match.id} style={{ padding:"7px 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                                      <span style={{ fontSize:11, color:"#9ab8a0", minWidth:50 }}>{match.label}</span>
+                                      <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, flexWrap:"wrap" }}>
+                                        {[teamA, teamB].map((team, ti) => {
+                                          const isWinner = winner === team;
+                                          const isLoser  = winner && !isWinner;
+                                          return (
+                                            <React.Fragment key={ti}>
+                                              {ti === 1 && <span style={{ fontSize:10, color:"#555" }}>vs</span>}
+                                              <button onClick={async () => {
+                                                if (!resolved) return;
+                                                const fresh = await dbLoad();
+                                                await settlePut("bracketWinners/"+match.id, team);
+                                                setLivePhase2({ ...(fresh.bracketWinners||{}), [match.id]: team });
+                                              }} style={{
+                                                padding:"3px 10px", borderRadius:4, border:"1px solid", fontSize:11,
+                                                cursor: resolved ? "pointer" : "default",
+                                                borderColor: isWinner ? "#8fffb0" : "rgba(255,255,255,0.1)",
+                                                background: isWinner ? "rgba(100,255,150,0.15)" : "rgba(255,255,255,0.03)",
+                                                color: isWinner ? "#8fffb0" : isLoser ? "#666" : "#c8b8a0",
+                                                textDecoration: isLoser ? "line-through" : "none",
+                                                opacity: isLoser ? 0.5 : 1,
+                                              }}>{team}</button>
+                                            </React.Fragment>
+                                          );
+                                        })}
+                                      </div>
+                                      {winner
+                                        ? <span style={{ fontSize:11, fontWeight:"bold", color:"#8fffb0", whiteSpace:"nowrap" }}>✓ {winner}</span>
+                                        : <span style={{ fontSize:10, color:"#666", whiteSpace:"nowrap" }}>{resolved ? "— no result yet" : "— slots unresolved"}</span>
+                                      }
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ))}
+                                );
+                              })}
+                            </div>
+                          ));
+                        })()}
                       </div>
 
                       {/* P2 Tiebreaker */}
