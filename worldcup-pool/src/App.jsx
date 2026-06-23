@@ -4135,7 +4135,7 @@ export default function WorldCupPool() {
                                             const isWinner = winner === team;
                                             const isLoser  = !!winner && !isWinner;
                                             return (
-                                              <React.Fragment key={ti}>
+                                              <span key={ti} style={{ display:"contents" }}>
                                                 {ti === 1 && <span style={{ fontSize:10, color:"#555" }}>vs</span>}
                                                 <button onClick={async () => {
                                                   if (!resolved) return;
@@ -4150,7 +4150,7 @@ export default function WorldCupPool() {
                                                   color: isWinner ? "#8fffb0" : isLoser ? "#555" : "#c8b8a0",
                                                   textDecoration: isLoser ? "line-through" : "none",
                                                 }}>{team}</button>
-                                              </React.Fragment>
+                                              </span>
                                             );
                                           })}
                                         </div>
