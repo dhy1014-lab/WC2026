@@ -2506,7 +2506,7 @@ export default function WorldCupPool() {
               `${propsOk  ? "✅" : "⚠️"} Props ${propLabel}`,
             ];
 
-            if (isPhase2Open()) {
+            if (p2EffectivelyOpen) {
               // Bracket: count locked matches and how many have a winner
               let bracketTotal = 0, bracketDoneCount = 0;
               Object.entries(KNOCKOUT_ROUNDS).forEach(([round, matches]) => {
@@ -3098,7 +3098,7 @@ export default function WorldCupPool() {
                 <div style={{ marginBottom:20 }}>
                   <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", letterSpacing:1, marginBottom:10, paddingBottom:4, borderBottom:"1px solid rgba(200,168,75,0.2)", display:"flex", justifyContent:"space-between" }}>
                     <span>🥇 GOLDEN BOOT</span>
-                    {isGoldenBootLocked() ? <span style={{ color:"#ff9090" }}>🔒 Locked</span> : !isPhase2Open() ? <span style={{ color:"#aab0ff" }}>🔜 Opens Jun 27</span> : <span style={{ color:"#9ab8a0" }}>Locks Jun 28 3pm ET</span>}
+                    {isGoldenBootLocked() ? <span style={{ color:"#ff9090" }}>🔒 Locked</span> : !p2EffectivelyOpen ? <span style={{ color:"#aab0ff" }}>🔜 Opens Jun 27</span> : <span style={{ color:"#9ab8a0" }}>Locks Jun 28 3pm ET</span>}
                   </div>
                   <div style={{ ...S.card, borderColor:"rgba(200,168,75,0.3)" }}>
                     <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:6 }}>Who will win the Golden Boot (tournament top scorer)?</div>
@@ -3118,13 +3118,13 @@ export default function WorldCupPool() {
                           const lost = goldenBoot.answer && isPick && !won;
                           return (
                             <button key={opt.name} onClick={() => {
-                              if (isGoldenBootLocked() || !isPhase2Open()) return;
+                              if (isGoldenBootLocked() || !p2EffectivelyOpen) return;
                               setGoldenBootPick(opt.name);
                             }} style={{
-                              padding:"12px 14px", borderRadius:10, border:"2px solid", textAlign:"left", cursor:(isGoldenBootLocked()||!isPhase2Open())?"default":"pointer",
+                              padding:"12px 14px", borderRadius:10, border:"2px solid", textAlign:"left", cursor:(isGoldenBootLocked()||!p2EffectivelyOpen)?"default":"pointer",
                               borderColor: won?"rgba(100,255,150,0.6)":lost?"rgba(255,100,100,0.5)":isPick?"#f0d060":"rgba(255,255,255,0.1)",
                               background: won?"rgba(0,180,80,0.15)":lost?"rgba(180,50,50,0.1)":isPick?"rgba(200,168,75,0.2)":"rgba(255,255,255,0.04)",
-                              opacity: (isGoldenBootLocked()||!isPhase2Open()) && !isPick ? 0.5 : 1,
+                              opacity: (isGoldenBootLocked()||!p2EffectivelyOpen) && !isPick ? 0.5 : 1,
                             }}>
                               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                                 <span style={{ fontSize:14, color: isPick?"#f0d060":"#f0e6c8", fontWeight: isPick?"bold":"normal" }}>
@@ -4761,7 +4761,7 @@ export default function WorldCupPool() {
               const pcts2 = settings.payouts2 || [60,25,10,5,0];
               return (
                 <div>
-                  {!isPhase2Open() && (
+                  {!p2EffectivelyOpen && (
                     <div style={{ ...S.card, borderColor:"rgba(100,100,255,0.3)", background:"rgba(50,50,150,0.1)", marginBottom:12, textAlign:"center" }}>
                       <div style={{ fontSize:13, color:"#aab0ff", marginBottom:4 }}>🔜 Phase 2 begins Jun 28</div>
                       <div style={{ fontSize:11, color:"#9ab8a0" }}>P2 standings will appear once the knockout stage starts</div>
@@ -4800,7 +4800,7 @@ export default function WorldCupPool() {
                           {(() => {
                             const totalBracket = Object.values(KNOCKOUT_ROUNDS).flat().length;
                             const p2Locked = isP2PropRoundLocked("r32"); // bracket locked at same time as R32 props
-                            const brktFlag = p2BracketDone >= totalBracket ? "✅" : !isPhase2Open() ? "" : p2Locked ? "🔒" : "⚠️";
+                            const brktFlag = p2BracketDone >= totalBracket ? "✅" : !p2EffectivelyOpen ? "" : p2Locked ? "🔒" : "⚠️";
                             const brktColor = p2BracketDone >= totalBracket ? "#9ab8a0" : p2Locked ? "#9ab8a0" : "#f0a020";
                             const totalP2Props = P2_PROPS.length;
                             // Only count unlocked P2 prop rounds
@@ -4809,7 +4809,7 @@ export default function WorldCupPool() {
                             const allP2PropsOk = unlockedP2Props === 0 || unlockedP2Done >= unlockedP2Props;
                             const gbDone = !!pred?.goldenBootPick;
                             const gbLocked = isP2PropRoundLocked("r32");
-                            if (!isPhase2Open()) return <div style={{ fontSize:10, color:"#9ab8a0" }}>Phase 2 opens Jun 28</div>;
+                            if (!p2EffectivelyOpen) return <div style={{ fontSize:10, color:"#9ab8a0" }}>Phase 2 opens Jun 28</div>;
                             return (
                               <div style={{ display:"flex", gap:8, fontSize:10, marginTop:2, flexWrap:"wrap" }}>
                                 <span style={{ color: brktColor }}>{brktFlag} {p2BracketDone}/{totalBracket} bracket</span>
@@ -4898,9 +4898,9 @@ export default function WorldCupPool() {
               <div style={S.card}>
                 <div style={{ fontSize:11, fontWeight:"bold", color:"#f0d060", marginBottom:8, letterSpacing:1 }}>📈 PHASE 2 POINTS OVER TIME</div>
                 <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:14 }}>
-                  {isPhase2Open() ? "Cumulative Phase 2 points per player as knockout results come in." : "Phase 2 chart will appear once the knockout stage begins (Jun 28)."}
+                  {p2EffectivelyOpen ? "Cumulative Phase 2 points per player as knockout results come in." : "Phase 2 chart will appear once the knockout stage begins (Jun 28)."}
                 </div>
-                {isPhase2Open() ? (
+                {p2EffectivelyOpen ? (
                   <>
                     <div style={{ textAlign:"center", padding:"16px 0", color:"#9ab8a0", fontSize:13 }}>
                       Chart will populate as knockout results and props settle.
@@ -4975,7 +4975,7 @@ export default function WorldCupPool() {
                 const anyBracketWinner = bracketWinners && Object.keys(bracketWinners).some(k => bracketWinners[k]);
                 const anyP2Prop = p2PropResults && Object.values(p2PropResults).some(v => v !== null && v !== undefined);
                 const gbSettled = !!goldenBoot?.answer;
-                if (!isPhase2Open()) return <div style={{ ...S.card, textAlign:"center", color:"#aab0ff", fontSize:13 }}>🔜 Phase 2 results will appear once the knockout stage begins (Jun 28).</div>;
+                if (!p2EffectivelyOpen) return <div style={{ ...S.card, textAlign:"center", color:"#aab0ff", fontSize:13 }}>🔜 Phase 2 results will appear once the knockout stage begins (Jun 28).</div>;
                 return (
                   <div>
                     <div style={{ marginBottom:18 }}>
