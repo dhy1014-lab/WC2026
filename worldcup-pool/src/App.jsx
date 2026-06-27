@@ -2760,6 +2760,34 @@ export default function WorldCupPool() {
               </div>
             </div>
 
+            {/* P2 progress bar — shown when P2 is open */}
+            {p2EffectivelyOpen && (() => {
+              const unlockedP2Props = P2_PROPS.filter(p => !isP2PropRoundLocked(p.round)).length;
+              const totalP2 = totalBracketMatches + unlockedP2Props + 1 + 1; // bracket + unlocked props + GB + TB
+              const doneP2 = bracketDone + p2PropsDone + (goldenBootPick ? 1 : 0) + (tbP2 !== "" ? 1 : 0);
+              const pct = Math.min(100, Math.round(doneP2 / totalP2 * 100));
+              const gbLocked = isGoldenBootLocked();
+              return (
+                <div style={{ marginBottom:14 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, color:"#9ab8a0", marginBottom:4 }}>
+                    <span>Phase 2 Progress</span>
+                    <span style={{ display:"flex", gap:8 }}>
+                      <span style={{ color: bracketDone >= totalBracketMatches ? "#8fffb0" : "#f0a020" }}>{bracketDone}/{totalBracketMatches} bracket</span>
+                      <span style={{ color:"#444" }}>·</span>
+                      <span style={{ color: p2PropsDone >= unlockedP2Props && unlockedP2Props > 0 ? "#8fffb0" : p2PropsDone > 0 ? "#f0a020" : "#9ab8a0" }}>{p2PropsDone}/{P2_PROPS.length} props</span>
+                      <span style={{ color:"#444" }}>·</span>
+                      <span style={{ color: goldenBootPick ? "#8fffb0" : gbLocked ? "#9ab8a0" : "#f0a020" }}>{goldenBootPick ? "✓" : gbLocked ? "🔒" : "⚠️"} GB</span>
+                      <span style={{ color:"#444" }}>·</span>
+                      <span style={{ color: tbP2 !== "" ? "#8fffb0" : "#f0a020" }}>{tbP2 !== "" ? "✓" : "⚠️"} TB</span>
+                    </span>
+                  </div>
+                  <div style={{ height:5, background:"rgba(255,255,255,0.08)", borderRadius:3, overflow:"hidden" }}>
+                    <div style={{ height:"100%", width:`${pct}%`, background: pct>=100 ? "linear-gradient(90deg,#4caf80,#8fffb0)" : "linear-gradient(90deg,#4a90d9,#aab0ff)", borderRadius:3, transition:"width 0.3s" }} />
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Phase tabs */}
             <div style={{ display:"flex", gap:4, marginBottom:12 }}>
               {[["p1","🏅 Phase 1"],["p2","🏆 Phase 2"]].map(([ph, label]) => (
@@ -4789,6 +4817,12 @@ export default function WorldCupPool() {
                                 <span style={{ color: allP2PropsOk ? "#9ab8a0" : "#f0a020" }}>{allP2PropsOk ? "✅" : "⚠️"} {unlockedP2Done}/{unlockedP2Props || totalP2Props} props</span>
                                 <span style={{ color:"#555" }}>·</span>
                                 <span style={{ color: gbDone ? "#9ab8a0" : gbLocked ? "#9ab8a0" : "#f0a020" }}>{gbDone ? "✅" : gbLocked ? "🔒" : "⚠️"} GB</span>
+                                <span style={{ color:"#555" }}>·</span>
+                                {(() => {
+                                  const tbOk = pred?.tbP2 !== undefined && pred?.tbP2 !== null && pred?.tbP2 !== "";
+                                  const tbLocked = bracketWinners?.final_1; // after Final is played
+                                  return <span style={{ color: tbOk ? "#9ab8a0" : tbLocked ? "#9ab8a0" : "#f0a020" }}>{tbOk ? "✅" : tbLocked ? "🔒" : "⚠️"} TB</span>;
+                                })()}
                               </div>
                             );
                           })()}
