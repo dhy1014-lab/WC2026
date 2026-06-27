@@ -1149,8 +1149,11 @@ function H2HModal({ playerA, playerB, predictions, liveResults, bracketWinners, 
               <div key={round} style={{ marginBottom:10 }}>
                 <div style={{ fontSize:10, color:"#9ab8a0", fontWeight:"bold", letterSpacing:1, marginBottom:4 }}>{roundLabel.toUpperCase()}</div>
                 {matches.map(m => {
-                  const pa = predA.phase2Picks?.[m.id], pb = predB.phase2Picks?.[m.id];
+                  const rawA = predA.phase2Picks?.[m.id], rawB = predB.phase2Picks?.[m.id];
                   const actual = bracketWinners?.[m.id];
+                  // Resolve slot codes to team names for display and comparison
+                  const pa = resolvePickToTeam(rawA, { groupRankings: liveResults?.groupRankings, bracketSlots });
+                  const pb = resolvePickToTeam(rawB, { groupRankings: liveResults?.groupRankings, bracketSlots });
                   const same = pa && pb && pa === pb;
                   const diff = pa && pb && pa !== pb;
                   const pts = ROUND_PTS[round];
@@ -1955,9 +1958,13 @@ export default function WorldCupPool() {
   // tied to each round's actual kickoff) — only how early picking can start.
   const p2EffectivelyOpen = isPhase2Open() || !!settings.p2Unlock;
   const p1AdminLocked = isPhase2Locked() && !settings.p1Unlock;
-  const p2Complete = !p2EffectivelyOpen || (bracketDone >= totalBracketMatches && goldenBootPick && tbP2 !== "");
+  const p2Complete = !p2EffectivelyOpen || (() => {
+    const unlockedProps = P2_PROPS.filter(p => !isP2PropRoundLocked(p.round));
+    const unlockedPropsDone = unlockedProps.filter(p => p2PropPicks[p.id] !== undefined && p2PropPicks[p.id] !== null).length;
+    return bracketDone >= totalBracketMatches && goldenBootPick && tbP2 !== "" && (unlockedProps.length === 0 || unlockedPropsDone >= unlockedProps.length);
+  })();
   const p1Complete = groupsDone >= 12 && (unlockedProps === 0 || unlockedPropsDone >= unlockedProps) && tbP1 !== "";
-  const hasIncomplete = currentPlayer && !isAdmin && (!p1Complete || (p2EffectivelyOpen && !p2Complete));
+  const hasIncomplete = currentPlayer && !isAdmin && ((!p1Complete && !isPhase2Locked()) || (p2EffectivelyOpen && !p2Complete));
 
   // Count results that are past their lock time but still null — used to badge the audit tab
   const needsOverrideCount = isAdmin ? (() => {
@@ -4846,9 +4853,14 @@ export default function WorldCupPool() {
                               if (actual !== null && actual !== undefined && pick === actual) pPts2 += actual ? prop.ptsYes : prop.ptsNo;
                             });
                             let gbPts2 = 0;
-                            if (pred2.goldenBootPick && goldenBoot?.answer && pred2.goldenBootPick === goldenBoot.answer) {
-                              const opt = pred2.goldenBootPick === "Other" ? { pts:25 } : goldenBoot?.options?.find(o => o.name === pred2.goldenBootPick);
-                              if (opt) gbPts2 = opt.pts;
+                            if (pred2.goldenBootPick && goldenBoot?.answer) {
+                              const answer = goldenBoot.answer;
+                              if (pred2.goldenBootPick === answer) {
+                                const opt = pred2.goldenBootPick === "Other" ? { pts:25 } : goldenBoot?.options?.find(o => o.name === pred2.goldenBootPick);
+                                if (opt) gbPts2 = opt.pts;
+                              } else if (pred2.goldenBootPick === "Other" && goldenBoot?.options && !goldenBoot.options.some(o => o.name === answer)) {
+                                gbPts2 = 25; // "Other" wins if actual winner isn't a named option
+                              }
                             }
                             return (
                               <table style={{ borderCollapse:"collapse", marginLeft:"auto", fontSize:11 }}>
