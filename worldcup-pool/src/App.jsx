@@ -536,7 +536,7 @@ function resolveBracketSlot(slot, { groupRankings, bracketSlots, winnersMap, bra
 const P2_PROPS = [
   // R32 props — lock Jun 28 3pm ET (first R32 kickoff) — 10 pts each
   { round:"r32", id:"p2_r32_a", q:"Will the combination of Messi, Mbappe, Haaland, Vini Junior, Undav, and Yamal record more than 7+ goals and/or assists in the Round of 32? (Excluding shootout penalty kicks)", ptsYes:6, ptsNo:4, yes:"Stars deliver 7+ G/A",           no:"Stars fall short of 7" },
-  { round:"r32", id:"p2_r32_b", q:"Will at least one top-10 FIFA-ranked team be eliminated in the R32?",                                                                                                            ptsYes:5, ptsNo:5, yes:"Top-10 side knocked out",          no:"All top-10 sides survive" },
+  { round:"r32", id:"p2_r32_b", q:"Will at least 2 top-10 FIFA-ranked teams be eliminated in the R32?",                                                                                                               ptsYes:5, ptsNo:5, yes:"2+ top-10 sides knocked out",      no:"Fewer than 2 top-10 sides fall" },
   { round:"r32", id:"p2_r32_c", q:"Will 6+ matches in Round of 32 produce 4+ goals scored?",                                                                                                                        ptsYes:4, ptsNo:6, yes:"6+ goal-fests in R32",             no:"Fewer than 6 high-scorers" },
   // R16 props — lock Jul 4 1pm ET (first R16 kickoff) — 12 pts each
   { round:"r16", id:"p2_r16_a", q:"Will a match-deciding goal be scored in 90+ stoppage time in any R16 match (regulation only)?",                                                                                  ptsYes:5, ptsNo:7, yes:"Late drama wins it!",              no:"No stoppage-time deciders" },
@@ -1891,23 +1891,38 @@ export default function WorldCupPool() {
   }
 
   async function savePreds() {
+    if (saving) return; // guard against double-tap
     setSaving(true);
-    const tbP1val = tbP1 !== "" ? parseInt(tbP1) : null;
-    const tbP2val = tbP2 !== "" ? parseInt(tbP2) : null;
-    const existing = predictions[currentPlayer.id] || {};
-    const merged = {
-      groupRankings: Object.keys(groupRankings).length > 0 ? groupRankings : (existing.groupRankings || {}),
-      propPicks: propPicks.some(p => p !== null) ? propPicks : (existing.propPicks || Array(34).fill(null)),
-      phase2Picks: Object.keys(phase2Picks).length > 0 ? phase2Picks : (existing.phase2Picks || {}),
-      p2PropPicks: Object.keys(p2PropPicks).length > 0 ? p2PropPicks : (existing.p2PropPicks || {}),
-      goldenBootPick: goldenBootPick || existing.goldenBootPick || null,
-      tbP1: tbP1val !== null ? tbP1val : (existing.tbP1 ?? null),
-      tbP2: tbP2val !== null ? tbP2val : (existing.tbP2 ?? null),
-    };
-    const np = { ...predictions, [currentPlayer.id]: merged };
-    setPredictions(np);
-    await dbSave(players, np, paid, settings, goldenBoot);
-    setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
+    try {
+      const tbP1val = tbP1 !== "" ? parseInt(tbP1) : null;
+      const tbP2val = tbP2 !== "" ? parseInt(tbP2) : null;
+      const existing = predictions[currentPlayer.id] || {};
+      const merged = {
+        groupRankings:  Object.keys(groupRankings).length > 0 ? groupRankings  : (existing.groupRankings  || {}),
+        propPicks:      propPicks.some(p => p !== null)        ? propPicks      : (existing.propPicks      || Array(34).fill(null)),
+        phase2Picks:    Object.keys(phase2Picks).length > 0    ? phase2Picks    : (existing.phase2Picks    || {}),
+        p2PropPicks:    Object.keys(p2PropPicks).length > 0    ? p2PropPicks    : (existing.p2PropPicks    || {}),
+        goldenBootPick: goldenBootPick || existing.goldenBootPick || null,
+        tbP1:           tbP1val !== null                       ? tbP1val        : (existing.tbP1           ?? null),
+        tbP2:           tbP2val !== null                       ? tbP2val        : (existing.tbP2           ?? null),
+      };
+      // Atomic: write ONLY this player's picks to their own path.
+      // Never re-writes other players' predictions — eliminates concurrent-save data loss.
+      const r = await fetch(`${DB_URL}/pool/predictions/${currentPlayer.id}.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(merged),
+      });
+      if (!r.ok) throw new Error(`Firebase error ${r.status}`);
+      // Update local predictions state functionally so we don't capture stale closure
+      setPredictions(prev => ({ ...prev, [currentPlayer.id]: merged }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      alert("Save failed — please try again.\n" + e.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function pinAnnouncement() {
