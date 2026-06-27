@@ -603,12 +603,12 @@ function calcPhase2Points(phase2Picks, bracketWinners, p2PropResults, goldenBoot
     const answer = goldenBoot.answer;
     if (goldenBootPick === answer) {
       const opt = goldenBootPick === "Other"
-        ? { pts: 20 }
+        ? { pts: 25 }
         : goldenBoot.options.find(o => o.name === goldenBootPick);
       if (opt) pts += opt.pts;
     } else if (goldenBootPick === "Other" && !goldenBoot.options.some(o => o.name === answer)) {
       // "Other" wins if the actual winner isn't one of the named options
-      pts += 20;
+      pts += 25;
     }
   }
   return pts;
@@ -673,7 +673,7 @@ const MAX_PTS = MAX_RANKING_PTS + MAX_PROP_PTS;
 // Phase 2 max: bracket + props + golden boot (max option 20)
 const MAX_BRACKET_PTS = Object.entries(ROUND_PTS).reduce((s, [round, pts]) => s + (KNOCKOUT_ROUNDS[round]||[]).length * pts, 0);
 const MAX_P2_PROP_PTS = P2_PROPS.reduce((s, p) => s + Math.max(p.ptsYes, p.ptsNo), 0);
-const MAX_PHASE2_PTS = MAX_BRACKET_PTS + MAX_P2_PROP_PTS + 20; // +20 for golden boot "Other"
+const MAX_PHASE2_PTS = MAX_BRACKET_PTS + MAX_P2_PROP_PTS + 25; // +25 for golden boot "Other"
 
 // Points progression per settled prop — used for sparkline chart
 function calcPointsTimeline(pred, live) {
@@ -3075,7 +3075,7 @@ export default function WorldCupPool() {
                   <div style={{ ...S.card, borderColor:"rgba(200,168,75,0.3)" }}>
                     <div style={{ fontSize:13, color:"#f0e6c8", marginBottom:6 }}>Who will win the Golden Boot (tournament top scorer)?</div>
                     <div style={{ fontSize:11, color:"#9ab8a0", marginBottom:12, lineHeight:1.5 }}>
-                      Top 3 group-stage scorers are shown after the group stage ends. Points weighted by likelihood — the favorite pays least, "Other" pays most (max 20pts).
+                      Top 3 group-stage scorers are shown after the group stage ends. Points weighted by likelihood — the favorite pays least, "Other" pays most (max 25pts).
                     </div>
                     {!(goldenBoot?.options?.length === 3 && goldenBoot.options.every(o => o.name)) ? (
                       <div style={{ fontSize:12, color:"#aab0ff", padding:"12px 0", textAlign:"center" }}>
@@ -3083,7 +3083,7 @@ export default function WorldCupPool() {
                       </div>
                     ) : (
                       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                        {[...goldenBoot.options, { name:"Other", pts: 20 }].map(opt => {
+                        {[...goldenBoot.options, { name:"Other", pts: 25 }].map(opt => {
                           const isPick = goldenBootPick === opt.name;
                           const isAnswer = goldenBoot.answer === opt.name;
                           const won = isAnswer && isPick;
@@ -3416,7 +3416,7 @@ export default function WorldCupPool() {
                 const gbPick = pred.goldenBootPick;
                 const gbAnswer = goldenBoot?.answer;
                 if (gbPick && gbAnswer && gbPick === gbAnswer) {
-                  const opt = gbPick === "Other" ? { pts: 20 } : goldenBoot?.options?.find(o => o.name === gbPick);
+                  const opt = gbPick === "Other" ? { pts: 25 } : goldenBoot?.options?.find(o => o.name === gbPick);
                   if (opt) gbPts = opt.pts;
                 }
                 return { p, bracketPts, propPts, gbPts, total: bracketPts + propPts + gbPts, bracketDetail, propDetail };
@@ -4007,7 +4007,7 @@ export default function WorldCupPool() {
 
                         {/* Manual options entry — 3 slots, name + pts */}
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                          <div style={{ fontSize:10, color:"#9ab8a0" }}>Options (3 — "Other" at 20pts always appended for players)</div>
+                          <div style={{ fontSize:10, color:"#9ab8a0" }}>Options (3 — "Other" at 25pts always appended for players)</div>
                           <button disabled={gbOptionsSheetImport.loading} onClick={async () => {
                             setGbOptionsSheetImport({ loading:true, error:"", diff:null, applying:false, done:"" });
                             try {
@@ -4097,7 +4097,7 @@ export default function WorldCupPool() {
                         {goldenBoot?.options?.length === 3 && (
                           <div>
                             <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:8 }}>
-                              {[...goldenBoot.options, { name:"Other", pts:20 }].map(o => (
+                              {[...goldenBoot.options, { name:"Other", pts:25 }].map(o => (
                                 <div key={o.name} style={{ background: goldenBoot.answer===o.name?"rgba(100,255,150,0.15)":"rgba(255,255,255,0.05)", border:"1px solid", borderColor: goldenBoot.answer===o.name?"rgba(100,255,150,0.4)":"transparent", borderRadius:4, padding:"3px 8px", fontSize:11 }}>
                                   <span style={{ color:"#f0e6c8" }}>{o.name}</span> <span style={{ color:"#f0d060" }}>{o.pts}pts</span>
                                   {goldenBoot.answer===o.name && <span style={{ color:"#8fffb0" }}> ✓</span>}
@@ -4813,7 +4813,7 @@ export default function WorldCupPool() {
                             });
                             let gbPts2 = 0;
                             if (pred2.goldenBootPick && goldenBoot?.answer && pred2.goldenBootPick === goldenBoot.answer) {
-                              const opt = pred2.goldenBootPick === "Other" ? { pts:20 } : goldenBoot?.options?.find(o => o.name === pred2.goldenBootPick);
+                              const opt = pred2.goldenBootPick === "Other" ? { pts:25 } : goldenBoot?.options?.find(o => o.name === pred2.goldenBootPick);
                               if (opt) gbPts2 = opt.pts;
                             }
                             return (
@@ -5002,7 +5002,7 @@ export default function WorldCupPool() {
                         <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"10px 12px", border:"1px solid rgba(255,255,255,0.09)" }}>
                           <div style={{ fontSize:13, color:"#f0d060", fontWeight:"bold", marginBottom:4 }}>🏆 {goldenBoot.answer}</div>
                           {(() => {
-                            const opt = goldenBoot.answer==="Other" ? {pts:20} : goldenBoot?.options?.find(o => o.name===goldenBoot.answer);
+                            const opt = goldenBoot.answer==="Other" ? {pts:25} : goldenBoot?.options?.find(o => o.name===goldenBoot.answer);
                             const correct = players.filter(pl => predictions[pl.id]?.goldenBootPick===goldenBoot.answer).length;
                             const total = players.filter(pl => predictions[pl.id]?.goldenBootPick).length;
                             return <div style={{ fontSize:11, color:"#9ab8a0" }}>{opt?`Worth ${opt.pts} pts`:""}{total>0?` · ${correct}/${total} picked correctly`:""}</div>;
